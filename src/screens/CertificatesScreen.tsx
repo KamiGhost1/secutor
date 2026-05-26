@@ -55,6 +55,8 @@ export function CertificatesScreen({filter}: {filter?: CertType}) {
 			<Header title={title} />
 			<Box padding={1} flexDirection="column" flexGrow={1}>
 				<Menu
+					searchable
+					searchPlaceholder={t('search.placeholder')}
 					emptyText={t('certs.empty')}
 					items={rows.map(r => {
 						const status = expiryStatusOfRow(r);
@@ -94,6 +96,7 @@ export function CertificatesScreen({filter}: {filter?: CertType}) {
 			<FunctionBar
 				keys={[
 					{key: 'Enter', label: t('fbar.details')},
+					{key: '/', label: t('fbar.search')},
 					{key: 'D', label: t('fbar.delete')},
 					{key: 'Esc', label: t('fbar.back')},
 				]}

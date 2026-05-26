@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Box, DOMElement, Text, useInput, Key} from 'ink';
 import {useMouseRegion} from '../input/mouseRegions.js';
 import {useTerminalSize} from '../state/useTerminalSize.js';
@@ -21,6 +21,9 @@ export function Menu<V>({
 	itemRenderer,
 	pageSize,
 	isActive = true,
+	searchable = false,
+	searchPlaceholder,
+	searchCorpus,
 }: {
 	items: MenuItem<V>[];
 	onSelect: (v: V, idx: number) => void;
@@ -32,34 +35,47 @@ export function Menu<V>({
 	itemRenderer?: (item: MenuItem<V>, focused: boolean) => React.ReactNode;
 	pageSize?: number;
 	isActive?: boolean;
+	searchable?: boolean;
+	searchPlaceholder?: string;
+	searchCorpus?: (item: MenuItem<V>) => string;
 }) {
+	const [searchMode, setSearchMode] = useState(false);
+	const [query, setQuery] = useState('');
+
+	const corpus = searchCorpus ?? ((it: MenuItem<V>) => `${it.label} ${it.hint ?? ''}`);
+	const filtered = useMemo(() => {
+		if (!query) return items.map((it, i) => ({it, origIdx: i}));
+		const q = query.toLowerCase();
+		return items
+			.map((it, i) => ({it, origIdx: i}))
+			.filter(({it}) => corpus(it).toLowerCase().includes(q));
+	}, [items, query, corpus]);
+
 	const findEnabled = (from: number, dir: 1 | -1, wrap: boolean): number => {
-		if (!items.length) return from;
+		if (!filtered.length) return from;
 		let i = from;
-		for (let n = 0; n < items.length; n++) {
+		for (let n = 0; n < filtered.length; n++) {
 			i = i + dir;
-			if (i < 0 || i >= items.length) {
+			if (i < 0 || i >= filtered.length) {
 				if (!wrap) return from;
-				i = (i + items.length) % items.length;
+				i = (i + filtered.length) % filtered.length;
 			}
-			if (!items[i]?.disabled) return i;
+			if (!filtered[i]?.it.disabled) return i;
 		}
 		return from;
 	};
 	const findEnabledFrom = (from: number, dir: 1 | -1): number => {
-		if (!items.length) return 0;
-		if (!items[from]?.disabled) return from;
+		if (!filtered.length) return 0;
+		if (!filtered[from]?.it.disabled) return from;
 		const found = findEnabled(from, dir, true);
 		return found;
 	};
 	const stepBy = (from: number, delta: number): number => {
-		const target = Math.max(0, Math.min(items.length - 1, from + delta));
-		if (!items[target]?.disabled) return target;
+		const target = Math.max(0, Math.min(filtered.length - 1, from + delta));
+		if (!filtered[target]?.it.disabled) return target;
 		const dir = delta >= 0 ? 1 : -1;
 		const found = findEnabled(target, dir as 1 | -1, false);
-		// If we couldn't find a non-disabled item in the direction we were paging,
-		// search backwards from `target` so we still move closer to the goal.
-		if (found === target && items[target]?.disabled) {
+		if (found === target && filtered[target]?.it.disabled) {
 			return findEnabled(target, (-dir) as 1 | -1, false);
 		}
 		return found;
@@ -73,12 +89,33 @@ export function Menu<V>({
 	const effectivePageSize = pageSize ?? Math.max(3, rows - 8);
 
 	useEffect(() => {
-		if (idx >= items.length && items.length > 0) setIdx(items.length - 1);
-	}, [items.length, idx]);
+		if (idx >= filtered.length && filtered.length > 0) setIdx(filtered.length - 1);
+		else if (filtered.length === 0) setIdx(0);
+	}, [filtered.length, idx]);
 
 	useInput(
 		(input, key) => {
-			if (!items.length) {
+			if (!filtered.length) {
+				if (searchMode) {
+					if (key.escape) {
+						setSearchMode(false);
+						setQuery('');
+						return;
+					}
+					if (key.backspace || key.delete) {
+						setQuery(q => q.slice(0, -1));
+						return;
+					}
+					if (input && !key.ctrl && !key.meta && input.length === 1) {
+						setQuery(q => q + input);
+						return;
+					}
+					return;
+				}
+				if (searchable && input === '/') {
+					setSearchMode(true);
+					return;
+				}
 				if (key.escape && onCancel) onCancel();
 				else if (onAction) onAction(input, key, null);
 				return;
@@ -87,42 +124,59 @@ export function Menu<V>({
 			else if (key.downArrow) setIdx(i => findEnabled(i, 1, true));
 			else if (key.pageUp) setIdx(i => stepBy(i, -effectivePageSize));
 			else if (key.pageDown) setIdx(i => stepBy(i, effectivePageSize));
-			else if (input === 'g' && !key.ctrl) setIdx(findEnabledFrom(0, 1));
-			else if (input === 'G') setIdx(findEnabledFrom(items.length - 1, -1));
 			else if (key.return) {
-				const item = items[idx];
-				if (item && !item.disabled) onSelect(item.value, idx);
-			} else if (key.escape && onCancel) onCancel();
-			else if (onAction) onAction(input, key, items[idx] || null);
+				const entry = filtered[idx];
+				if (entry && !entry.it.disabled) onSelect(entry.it.value, entry.origIdx);
+			} else if (searchMode) {
+				if (key.escape) {
+					setSearchMode(false);
+					setQuery('');
+					setIdx(findEnabledFrom(0, 1));
+				} else if (key.backspace || key.delete) {
+					setQuery(q => q.slice(0, -1));
+					setIdx(0);
+				} else if (input && !key.ctrl && !key.meta && input.length === 1) {
+					setQuery(q => q + input);
+					setIdx(0);
+				}
+			} else if (searchable && input === '/') {
+				setSearchMode(true);
+			} else if (input === 'g' && !key.ctrl) setIdx(findEnabledFrom(0, 1));
+			else if (input === 'G') setIdx(findEnabledFrom(filtered.length - 1, -1));
+			else if (key.escape && onCancel) onCancel();
+			else if (onAction) {
+				const entry = filtered[idx];
+				onAction(input, key, entry?.it || null);
+			}
 		},
 		{isActive},
 	);
 
 	useMouseRegion(listRef, {
 		onWheel: (dir) => {
-			if (!items.length) return;
+			if (!filtered.length) return;
 			setIdx(i => findEnabled(i, dir === 'up' ? -1 : 1, false));
 		},
 		onClick: (rel) => {
-			if (!items.length) return;
+			if (!filtered.length) return;
 			const clicked = startRef.current + rel.y;
-			if (clicked < 0 || clicked >= items.length) return;
-			const item = items[clicked];
-			if (!item || item.disabled) {
+			if (clicked < 0 || clicked >= filtered.length) return;
+			const entry = filtered[clicked];
+			if (!entry || entry.it.disabled) {
 				setIdx(clicked);
 				return;
 			}
-			if (clicked === idx) onSelect(item.value, clicked);
+			if (clicked === idx) onSelect(entry.it.value, entry.origIdx);
 			else setIdx(clicked);
 		},
 	});
 
 	const start = Math.max(
 		0,
-		Math.min(idx - Math.floor(effectivePageSize / 2), Math.max(0, items.length - effectivePageSize)),
+		Math.min(idx - Math.floor(effectivePageSize / 2), Math.max(0, filtered.length - effectivePageSize)),
 	);
 	startRef.current = start;
-	const visible = items.slice(start, start + effectivePageSize);
+	const visible = filtered.slice(start, start + effectivePageSize);
 
 	return (
 		<Box flexDirection="column">
@@ -131,15 +185,28 @@ export function Menu<V>({
 					{title}
 				</Text>
 			)}
+			{(searchMode || query) && (
+				<Box>
+					<Text color={searchMode ? 'yellow' : 'gray'}>
+						{'/'}
+						{query}
+						{searchMode ? '▏' : ''}
+					</Text>
+					{!query && searchMode && searchPlaceholder && (
+						<Text color="gray"> {searchPlaceholder}</Text>
+					)}
+				</Box>
+			)}
 			<Box ref={listRef} flexDirection="column">
-				{items.length === 0 ? (
+				{filtered.length === 0 ? (
 					<Box paddingY={1}>
-						<Text color="gray">{emptyText || '— empty —'}</Text>
+						<Text color="gray">{query ? '— no matches —' : (emptyText || '— empty —')}</Text>
 					</Box>
 				) : (
-					visible.map((it, i) => {
+					visible.map((entry, i) => {
 						const realIdx = start + i;
 						const focused = realIdx === idx;
+						const it = entry.it;
 						if (itemRenderer) {
 							return (
 								<Box key={realIdx}>{itemRenderer(it, focused)}</Box>
@@ -163,9 +230,10 @@ export function Menu<V>({
 					})
 				)}
 			</Box>
-			{items.length > effectivePageSize && (
+			{filtered.length > effectivePageSize && (
 				<Text color="gray">
-					{idx + 1}/{items.length}
+					{idx + 1}/{filtered.length}
+					{query ? ` (filtered from ${items.length})` : ''}
 				</Text>
 			)}
 			{footer && <Box marginTop={1}>{footer}</Box>}

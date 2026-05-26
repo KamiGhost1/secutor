@@ -41,6 +41,8 @@ export function ProfilesScreen() {
 			<Header title={t('profiles.title')} />
 			<Box padding={1} flexDirection="column" flexGrow={1}>
 				<Menu
+					searchable
+					searchPlaceholder={t('search.placeholder')}
 					emptyText={t('profiles.empty')}
 					items={rows.map(p => {
 						const c = certRepo.findById(p.cert_id);
@@ -60,6 +62,7 @@ export function ProfilesScreen() {
 			<FunctionBar
 				keys={[
 					{key: 'Enter', label: t('fbar.export')},
+					{key: '/', label: t('fbar.search')},
 					{key: 'D', label: t('fbar.delete')},
 					{key: 'Esc', label: t('fbar.back')},
 				]}

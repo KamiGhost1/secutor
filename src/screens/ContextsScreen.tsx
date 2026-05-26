@@ -74,6 +74,8 @@ export function ContextsScreen() {
 			<Header title={t('contexts.title')} />
 			<Box padding={1} flexDirection="column" flexGrow={1}>
 				<Menu
+					searchable
+					searchPlaceholder={t('search.placeholder')}
 					title={t('contexts.pickPrompt')}
 					emptyText={t('contexts.empty')}
 					items={contexts.map(c => ({
@@ -115,6 +117,7 @@ export function ContextsScreen() {
 					{key: 'D', label: t('fbar.delete')},
 					{key: 'I', label: t('fbar.import')},
 					{key: 'S', label: t('main.settings')},
+					{key: '/', label: t('fbar.search')},
 					{key: 'Enter', label: t('fbar.openCmd')},
 					{key: 'F10', label: t('fbar.quit')},
 				]}

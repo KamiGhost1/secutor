@@ -1,6 +1,6 @@
 {
     "name": "secutor",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "description": "Interactive TUI certificate manager (CA, server, client, profiles)",
     "bin": {
         "secutor": "dist/cli.js"

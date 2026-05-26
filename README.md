@@ -1,6 +1,6 @@
 # secutor
 
-Interactive terminal UI for managing a private PKI plus modern crypto tooling: root and intermediate CAs, server and client certificates with RSA / ECDSA / Ed25519 keys, PKCS#12 profiles, full chain export, revocation with CRLs, file & application signing, and SSH key generation. CAs can be protected with a passphrase. Everything lives in encrypted local SQLite "contexts" — no external services, no daemons.
+Interactive terminal UI for managing a private PKI plus modern crypto tooling: root and intermediate CAs, server and client certificates with RSA / ECDSA / Ed25519 keys, PKCS#12 profiles, full chain export, revocation with CRLs, file & application signing, and SSH key generation. Exports as a ready-to-use **nginx** server block or **Traefik** (file provider / ACME) bundle, with one-keystroke copy to the system clipboard. CAs can be protected with a passphrase. Everything lives in encrypted local SQLite "contexts" — no external services, no daemons.
 
 [![npm](https://img.shields.io/npm/v/secutor.svg)](https://www.npmjs.com/package/secutor)
 
@@ -15,6 +15,9 @@ Interactive terminal UI for managing a private PKI plus modern crypto tooling: r
 - **File & application signing** — sign any byte stream (binaries, archives, releases) with a stored certificate's key. Two output modes: a detached `.sig` JSON manifest, or a self-describing bundle that prepends the manifest to the data. Verification supports fingerprint pinning so a swapped cert is rejected.
 - **SSH keys** — generate Ed25519, RSA 2048/3072/4096, ECDSA P-256/P-384 SSH identity keys, store them encrypted inside the context, and export to `~/.ssh` in OpenSSH v1 format (the format `ssh-keygen` and `ssh-agent` actually accept).
 - **Full chain export** — for any CA, export `cert + parents up to root`, the entire signed *subtree* (CA + every descendant), or a CRL. Standard PEM bundle / cert-only / key-only / chain are also available for leaves.
+- **Ready-to-use web-server configs** *(opt-in)* — export any leaf cert as a complete **nginx** server block, a **Traefik** file-provider `dynamic.yml`, or a **Traefik + ACME** (Let's Encrypt) static + dynamic pair. `server_name` / `Host` rules are pre-filled from the cert's CN + SANs (editable), and the bundle writes `cert.crt` / `key.key` / `chain.crt` next to the config file in one selected folder. Hidden by default — enable in **Settings → "Show nginx / Traefik configs in export"** to surface them in the cert-export menu.
+- **Clipboard export** — every text export (cert, key, bundle, chain, subtree, CRL as base64, or a full nginx / Traefik bundle) can be sent straight to the system clipboard via `pbcopy` / `xclip` / `xsel` / `wl-copy` / `clip` — no extra dependencies.
+- **`/` quick filter** — press `/` on any list (certificates, SSH keys, P12 profiles, contexts) to type-to-filter by name, CN, SANs, fingerprint, or comment. `Esc` clears.
 - **PKCS#12 profiles** — bundle leaf + key + chain into a password-protected `.p12` for browsers, mobile, or service deployment. Import and decrypt existing `.p12` files too.
 - **Encrypted contexts** — a *context* is one independent PKI. Each context is a single SQLite file, optionally encrypted at rest with a password (AES-GCM). Switch between contexts inside the app or import/export them as portable files.
 - **Import existing material** — drop in PEM (`.crt`/`.pem`/`.cer`/combined) or PKCS#12 (`.p12`/`.pfx`); the importer detects and stores intermediates/roots as CAs and links the chain.
@@ -53,6 +56,7 @@ Layout:
 ~/.secutor/
 ├── meta.json                  # context registry
 ├── locale.json                # UI language
+├── settings.json              # UI preferences (e.g. show web-server configs in export)
 └── contexts/
     └── <name>/
         ├── context.json       # context metadata
@@ -74,16 +78,28 @@ Encrypted contexts are decrypted to a temp file (mode 0600) for the duration of 
 8. **Manage issuer** — on cert details, press `M`. Two modes:
    - *Attach to existing CA* — DB metadata only. Useful if you deleted a CA and re-imported it (the new row has a different `id`, so the orphaned children show "Missing issuer"). The picker flags CAs whose subject matches the cert's `Issuer` field; picking a non-matching one is allowed but warns that cryptographic verification will still fail.
    - *Re-sign with a different CA* — generates a brand-new signature using the chosen CA's private key. The leaf's public key, subject, SANs, validity, and extensions are preserved; issuer DN, AKI, and serial are updated. Existing private keys stay valid because they pair with the public key, not the cert. Only CAs that have a private key in the DB are eligible.
-9. **Export** — from any cert's details, press `E`. Options:
+9. **Export** — from any cert's details, press `E`. Pick a format, then choose **Save to file/folder** or **Copy to clipboard**. Available formats:
    - `cert` (PEM) — just the certificate
    - `key` (PEM) — just the private key
    - `bundle` — cert + key concatenated
    - `chain` — cert + parent CAs up to root
+   - `nginx config + cert files` *(only if enabled in Settings)* — a `server { ... }` block with TLS 1.2/1.3, `server_name`, `ssl_certificate` / `ssl_certificate_key` pointing at the bundled files in your chosen install dir (defaults to `/etc/nginx/certs/<name>`)
+   - `Traefik (file provider)` *(only if enabled in Settings)* — a dynamic `<name>.dynamic.yml` with `tls.certificates`, a router and a service stub
+   - `Traefik with ACME (Let's Encrypt)` *(only if enabled in Settings)* — `traefik.yml` (entryPoints, HTTP→HTTPS redirect, `certificatesResolvers` with HTTP-01) + `<name>.dynamic.yml` with the cert as a default-store fallback
    - `subtree` *(CA only)* — this CA + every cert it has signed, transitively
    - `CRL` *(CA only)* — signed v2 X.509 CRL listing this CA's directly-revoked children
 10. **Sign a file** — pick a leaf cert (server or client) and a file. Choose detached (writes `<file>.sig`) or bundled (a self-describing `.secsig` blob that contains both manifest and data). The manifest pins the signer's certificate by SHA-256 fingerprint.
 11. **Verify a signature** — point at the data and the manifest (or the bundle); the app rebuilds the data hash, locates the signer cert, and validates the signature. Wrong cert, tampered data, or a fingerprint-pinning mismatch all surface as a single clear ✘.
 12. **SSH keys** — generate an Ed25519/RSA/ECDSA SSH identity key with an optional passphrase. Stored alongside certs in the same context. Export to `~/.ssh/<name>` in OpenSSH v1 format (the format `ssh-keygen`/`ssh-agent` actually accept) with `0600` perms.
+
+## Settings
+
+Open from the contexts screen with `S`. Two options live there today:
+
+- **Language** — toggle between English and Русский. Persisted to `~/.secutor/locale.json`.
+- **Show nginx / Traefik configs in export** — when enabled, the cert-export menu lists `nginx`, `Traefik (file provider)`, and `Traefik with ACME` formats. Off by default — flip it on once and they appear in every cert's `E` menu thereafter. Persisted to `~/.secutor/settings.json`.
+
+`Enter` toggles the focused option (and shows a toast); `Esc` returns to the previous screen.
 
 ## Keyboard
 
@@ -92,6 +108,7 @@ Encrypted contexts are decrypted to a temp file (mode 0600) for the duration of 
 | `↑` `↓` / Tab | Navigate items / fields |
 | `Enter` | Open / submit |
 | `Esc` | Back / cancel |
+| `/` | Filter the current list (certificates, SSH keys, profiles, contexts) — type to narrow, `Esc` clears |
 | `E` | Export (on cert details) |
 | `P` | Make P12 profile (on cert details) |
 | `V` | Verify (on cert details) |
@@ -198,10 +215,13 @@ src/
 │   ├── parser.ts          # cert field extraction for the UI
 │   ├── audit.ts           # cross-row sanity checks (drift, orphan, dn-mismatch, signature-invalid…)
 │   ├── verify.ts          # chain + revocation + SNI verification
-│   └── expiry.ts          # not-before/not-after classification, color/icon
+│   ├── expiry.ts          # not-before/not-after classification, color/icon
+│   └── configExport.ts    # nginx / Traefik (file-provider, ACME) bundle generators
 ├── ssh/
 │   └── sshKeys.ts         # SSH identity-key generation, OpenSSH wire format, OpenSSH v1 private export, ~/.ssh helper
-├── components/            # ink components (Menu, Form, FileExplorer, …)
+├── utils/
+│   └── clipboard.ts       # cross-platform copy via pbcopy / xclip / xsel / wl-copy / clip
+├── components/            # ink components (Menu with `/` search, Form, FileExplorer, …)
 ├── i18n/
 │   ├── LocaleProvider.tsx
 │   └── locales/           # en.ts, ru.ts
@@ -220,6 +240,7 @@ test/
 ├── ca-password.test.ts       # passphrase-protected CA keys: issue, intermediate, re-sign, ECDSA + password
 ├── signing.test.ts           # sign/verify across all algorithms, detached / bundled, tamper detection, fingerprint pinning
 ├── ssh.test.ts               # OpenSSH wire format, ssh-keygen interop, OpenSSH v1 private export, ~/.ssh perms
+├── pkcs12.test.ts            # PKCS#12 build / parse round-trips across algorithms
 ├── audit.test.ts             # store-level findings (parse-error, key-mismatch, meta-drift, issuer-* …)
 └── expiry.test.ts            # ok / expiring-soon / expired / not-yet-valid classifier
 ```
@@ -315,18 +336,20 @@ The bundle layout is a 15-byte magic (`SECUTORSIG\x01`) + uint32-BE manifest len
 ```
 $ npm test
 …
-# tests 69
-# pass  69
+# tests 82
+# pass  82
 # fail  0
 ```
 
 The suite covers:
 
-- **22** RSA / audit / expiry tests (unchanged from prior versions)
-- **12** modern-algorithm tests — ECDSA P-256, P-384, Ed25519, mixed-algorithm chains, three-tier intermediate chains, re-signing across algorithms
-- **7** CA-passphrase tests — encryption envelope, mandatory-password enforcement, wrong-password rejection, intermediate with a different passphrase, ECDSA + passphrase, re-sign with encrypted CA
-- **10** file-signing tests — sign/verify across all signing algorithms, encrypted signer key, detached `.sig`, bundled format, signer mismatch, fingerprint pinning, JSON round-trip
-- **18** SSH-key tests — OpenSSH wire format for all algorithms, `ssh-keygen -lf` fingerprint match, `ssh-keygen -y -f` reads the OpenSSH v1 private-key output, encrypted-key round-trip, `~/.ssh` export with `0600` perms
+- RSA cert generation, SAN encoding, serial sign-bit handling, and `openssl verify` interop
+- Modern-algorithm coverage — ECDSA P-256, P-384, Ed25519, mixed-algorithm chains, three-tier intermediate chains, re-signing across algorithms
+- CA-passphrase encryption envelope, mandatory-password enforcement, wrong-password rejection, intermediate with a different passphrase, ECDSA + passphrase, re-sign with encrypted CA
+- PKCS#12 build / parse round-trips across algorithms
+- File-signing — sign/verify across all signing algorithms, encrypted signer key, detached `.sig`, bundled format, signer mismatch, fingerprint pinning, JSON round-trip
+- SSH-key tests — OpenSSH wire format for all algorithms, `ssh-keygen -lf` fingerprint match, `ssh-keygen -y -f` reads the OpenSSH v1 private-key output, encrypted-key round-trip, `~/.ssh` export with `0600` perms
+- Store-level audit findings (parse-error, key-mismatch, meta-drift, issuer-* …) and expiry classification
 
 ## Security notes
 

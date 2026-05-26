@@ -1,5 +1,5 @@
 import React, {useState, useCallback} from 'react';
-import {Box, Text, useInput} from 'ink';
+import {Box} from 'ink';
 import {Header} from '../components/Header.js';
 import {FunctionBar} from '../components/FunctionBar.js';
 import {Menu} from '../components/Menu.js';
@@ -15,14 +15,6 @@ export function SshKeysScreen() {
 	const [confirmDelete, setConfirmDelete] = useState<SshKeyRow | null>(null);
 
 	const refresh = useCallback(() => setRows(sshKeyRepo.list()), []);
-
-	useInput(
-		(input, key) => {
-			if (key.escape) return pop();
-			if (input === 'n' || input === 'N') push({kind: 'create-ssh-key'});
-		},
-		{isActive: !confirmDelete},
-	);
 
 	if (confirmDelete) {
 		return (
@@ -43,17 +35,23 @@ export function SshKeysScreen() {
 		<Box flexDirection="column" flexGrow={1}>
 			<Header title={t('ssh.title')} />
 			<Box padding={1} flexDirection="column" flexGrow={1}>
-				{rows.length === 0 ? (
-					<Text color="gray">{t('ssh.empty')}</Text>
-				) : (
+				{(
 					<Menu
+						searchable
+						searchPlaceholder={t('search.placeholder')}
+						emptyText={t('ssh.empty')}
 						items={rows.map(r => ({
 							label: `${algoEmoji(r.algorithm)} ${r.name}`,
 							value: r.id,
 							hint: `${r.algorithm} · ${r.fingerprint}${r.encrypted ? ' · 🔐' : ''}`,
 						}))}
 						onSelect={(id) => push({kind: 'ssh-key-details', id})}
+						onCancel={pop}
 						onAction={(input, _key, item) => {
+							if (input === 'n' || input === 'N') {
+								push({kind: 'create-ssh-key'});
+								return;
+							}
 							if (!item) return;
 							const row = rows.find(r => r.id === item.value);
 							if (!row) return;
@@ -63,10 +61,12 @@ export function SshKeysScreen() {
 					/>
 				)}
 			</Box>
+
 			<FunctionBar
 				keys={[
 					{key: 'N', label: t('ssh.fbarNew')},
 					{key: 'Enter', label: t('fbar.openCmd')},
+					{key: '/', label: t('fbar.search')},
 					{key: 'D', label: t('fbar.delete')},
 					{key: 'Esc', label: t('fbar.back')},
 				]}
