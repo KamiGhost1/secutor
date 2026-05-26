@@ -27,6 +27,11 @@ import {SetPasswordScreen} from './screens/SetPasswordScreen.js';
 import {SettingsScreen} from './screens/SettingsScreen.js';
 import {AuditScreen} from './screens/AuditScreen.js';
 import {RenewCertScreen} from './screens/RenewCertScreen.js';
+import {SignFileScreen} from './screens/SignFileScreen.js';
+import {VerifySignatureScreen} from './screens/VerifySignatureScreen.js';
+import {SshKeysScreen} from './screens/SshKeysScreen.js';
+import {CreateSshKeyScreen} from './screens/CreateSshKeyScreen.js';
+import {SshKeyDetailsScreen} from './screens/SshKeyDetailsScreen.js';
 
 function Router() {
 	const {current} = useApp();
@@ -55,6 +60,11 @@ function Router() {
 		case 'export-cert':      return <ExportCertScreen id={screen.id} />;
 		case 'export-profile':   return <ExportProfileScreen id={screen.id} />;
 		case 'audit':            return <AuditScreen />;
+		case 'sign-file':        return <SignFileScreen />;
+		case 'verify-signature': return <VerifySignatureScreen />;
+		case 'ssh-keys':         return <SshKeysScreen />;
+		case 'create-ssh-key':   return <CreateSshKeyScreen />;
+		case 'ssh-key-details':  return <SshKeyDetailsScreen id={screen.id} />;
 		case 'settings':         return <SettingsScreen />;
 		default:
 			return (

@@ -2,6 +2,7 @@ import React from 'react';
 import {Box, Text} from 'ink';
 import {useApp} from '../state/AppContext.js';
 import {useT} from '../i18n/LocaleProvider.js';
+import {VERSION} from '../version.js';
 
 export function Header({title}: {title: string}) {
 	const {contextName} = useApp();
@@ -14,7 +15,7 @@ export function Header({title}: {title: string}) {
 			justifyContent="space-between"
 		>
 			<Text bold color="cyan">
-				{t('app.headerPrefix')} · {title}
+				{t('app.headerPrefix')} <Text color="gray">v{VERSION}</Text> · {title}
 			</Text>
 			<Text color="gray">
 				{t('app.contextLabel')}:{' '}

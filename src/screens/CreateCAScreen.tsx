@@ -3,13 +3,15 @@ import {Box, Text, useInput} from 'ink';
 import Spinner from 'ink-spinner';
 import {Header} from '../components/Header.js';
 import {FunctionBar} from '../components/FunctionBar.js';
-import {TextField} from '../components/TextField.js';
+import {TextField, PasswordField} from '../components/TextField.js';
 import {Button} from '../components/Button.js';
+import {AlgorithmPicker} from '../components/AlgorithmPicker.js';
 import {useArrowFocus} from '../components/Form.js';
 import {useApp} from '../state/AppContext.js';
 import {useT} from '../i18n/LocaleProvider.js';
 import {createCA} from '../certs/generator.js';
 import {certRepo} from '../storage/repos.js';
+import {KeyAlgorithm} from '../certs/keys.js';
 
 export function CreateCAScreen() {
 	useArrowFocus();
@@ -23,6 +25,9 @@ export function CreateCAScreen() {
 	const [city, setCity] = useState('');
 	const [email, setEmail] = useState('');
 	const [days, setDays] = useState('3650');
+	const [algorithm, setAlgorithm] = useState<KeyAlgorithm>('rsa-2048');
+	const [keyPw, setKeyPw] = useState('');
+	const [keyPwRepeat, setKeyPwRepeat] = useState('');
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 
@@ -37,6 +42,8 @@ export function CreateCAScreen() {
 		const d = parseInt(days, 10);
 		if (!d || d < 1) return setError(t('createCa.errDays'));
 		if (certRepo.findByName(name.trim())) return setError(t('createCa.errNameTaken'));
+		if (keyPw && keyPw !== keyPwRepeat) return setError(t('createCa.errKeyPwMismatch'));
+		if (keyPw && keyPw.length < 4) return setError(t('createCa.errKeyPwShort'));
 
 		setBusy(true);
 		try {
@@ -53,6 +60,8 @@ export function CreateCAScreen() {
 								localityName: city.trim() || undefined,
 								emailAddress: email.trim() || undefined,
 								validityDays: d,
+								algorithm,
+								keyPassword: keyPw || null,
 							}),
 						);
 					} catch (e) {
@@ -86,12 +95,18 @@ export function CreateCAScreen() {
 			<Box padding={1} flexDirection="column">
 				<TextField id="name" label={t('createCa.dbName')} value={name} onChange={setName} autoFocus placeholder="root-ca" />
 				<TextField id="cn" label={t('createCa.cn')} value={cn} onChange={setCn} placeholder="My Root CA" />
+				<AlgorithmPicker id="algorithm" label={t('createCa.algorithm')} value={algorithm} onChange={setAlgorithm} />
 				<TextField id="org" label={t('createCa.org')} value={org} onChange={setOrg} />
 				<TextField id="country" label={t('createCa.country')} value={country} onChange={setCountry} />
 				<TextField id="state" label={t('createCa.state')} value={state} onChange={setState} />
 				<TextField id="city" label={t('createCa.city')} value={city} onChange={setCity} />
 				<TextField id="email" label={t('createCa.email')} value={email} onChange={setEmail} />
 				<TextField id="days" label={t('createCa.days')} value={days} onChange={setDays} />
+				<Box marginTop={1} marginBottom={0}>
+					<Text color="gray">{t('createCa.passphraseSection')}</Text>
+				</Box>
+				<PasswordField id="keyPw" label={t('createCa.keyPassword')} value={keyPw} onChange={setKeyPw} placeholder={t('createCa.keyPasswordHint')} />
+				<PasswordField id="keyPwRepeat" label={t('createCa.keyPasswordRepeat')} value={keyPwRepeat} onChange={setKeyPwRepeat} />
 				{error && (
 					<Box marginTop={1}>
 						<Text color="red">⚠ {error}</Text>
@@ -107,6 +122,7 @@ export function CreateCAScreen() {
 			<FunctionBar
 				keys={[
 					{key: 'Tab', label: t('fbar.fields')},
+					{key: 'Ctrl+K', label: t('fbar.algorithm')},
 					{key: 'Enter', label: t('fbar.submit')},
 					{key: 'Esc', label: t('fbar.back')},
 				]}

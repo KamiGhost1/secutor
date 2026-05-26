@@ -191,6 +191,63 @@ export const certRepo = {
 	},
 };
 
+export type SshKeyRow = {
+	id: number;
+	name: string;
+	algorithm: string;
+	comment: string | null;
+	public_key: string;
+	private_key: string;
+	encrypted: number; // 0 or 1
+	fingerprint: string;
+	created_at: string;
+};
+
+export const sshKeyRepo = {
+	insert(row: Omit<SshKeyRow, 'id' | 'created_at'>): number {
+		const db = getDb();
+		const stmt = db.prepare(`
+			INSERT INTO ssh_keys
+				(name, algorithm, comment, public_key, private_key, encrypted, fingerprint, created_at)
+			VALUES
+				(@name, @algorithm, @comment, @public_key, @private_key, @encrypted, @fingerprint, @created_at)
+		`);
+		const info = stmt.run({
+			...row,
+			created_at: new Date().toISOString(),
+		});
+		persist();
+		return Number(info.lastInsertRowid);
+	},
+
+	list(): SshKeyRow[] {
+		const db = getDb();
+		return db.prepare('SELECT * FROM ssh_keys ORDER BY created_at DESC').all() as SshKeyRow[];
+	},
+
+	findById(id: number): SshKeyRow | null {
+		const db = getDb();
+		return (db.prepare('SELECT * FROM ssh_keys WHERE id = ?').get(id) as SshKeyRow | undefined) || null;
+	},
+
+	findByName(name: string): SshKeyRow | null {
+		const db = getDb();
+		return (db.prepare('SELECT * FROM ssh_keys WHERE name = ?').get(name) as SshKeyRow | undefined) || null;
+	},
+
+	delete(id: number): void {
+		const db = getDb();
+		db.prepare('DELETE FROM ssh_keys WHERE id = ?').run(id);
+		persist();
+	},
+
+	rename(id: number, newName: string): void {
+		const db = getDb();
+		db.prepare('UPDATE ssh_keys SET name = ? WHERE id = ?').run(newName, id);
+		persist();
+	},
+};
+
 export const profileRepo = {
 	insert(row: Omit<ProfileRow, 'id' | 'created_at'>): number {
 		const db = getDb();

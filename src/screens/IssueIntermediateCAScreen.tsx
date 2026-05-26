@@ -3,14 +3,16 @@ import {Box, Text, useInput} from 'ink';
 import Spinner from 'ink-spinner';
 import {Header} from '../components/Header.js';
 import {FunctionBar} from '../components/FunctionBar.js';
-import {TextField} from '../components/TextField.js';
+import {TextField, PasswordField} from '../components/TextField.js';
 import {Button} from '../components/Button.js';
 import {Menu} from '../components/Menu.js';
+import {AlgorithmPicker} from '../components/AlgorithmPicker.js';
 import {useArrowFocus} from '../components/Form.js';
 import {useApp} from '../state/AppContext.js';
 import {useT} from '../i18n/LocaleProvider.js';
 import {issueIntermediateCA} from '../certs/generator.js';
 import {certRepo} from '../storage/repos.js';
+import {isEncryptedKey, KeyAlgorithm} from '../certs/keys.js';
 
 export function IssueIntermediateCAScreen() {
 	const {pop, replace, showToast} = useApp();
@@ -42,10 +44,10 @@ export function IssueIntermediateCAScreen() {
 				<Box padding={1}>
 					<Menu
 						items={cas.map(c => ({
-							label: `${c.key_pem ? '🔑 ' : '🔒 '}${c.name}`,
+							label: `${c.key_pem ? (isEncryptedKey(c.key_pem) ? '🔐 ' : '🔑 ') : '🔒 '}${c.name}`,
 							value: c.id,
 							hint: c.key_pem
-								? `CN=${c.common_name}`
+								? `CN=${c.common_name}` + (isEncryptedKey(c.key_pem) ? ' · ' + t('issue.caEncrypted') : '')
 								: `CN=${c.common_name} · ${t('issue.caNoKey')}`,
 							disabled: !c.key_pem,
 						}))}
@@ -85,6 +87,10 @@ function IssueIntermediateForm({
 	useArrowFocus();
 	const t = useT();
 	const issuer = useMemo(() => certRepo.findById(caId), [caId]);
+	const caEncrypted = useMemo(
+		() => (issuer?.key_pem ? isEncryptedKey(issuer.key_pem) : false),
+		[issuer],
+	);
 	const [name, setName] = useState('');
 	const [cn, setCn] = useState('');
 	const [org, setOrg] = useState('');
@@ -94,6 +100,10 @@ function IssueIntermediateForm({
 	const [email, setEmail] = useState('');
 	const [days, setDays] = useState('1825');
 	const [pathLen, setPathLen] = useState('0');
+	const [algorithm, setAlgorithm] = useState<KeyAlgorithm>('rsa-2048');
+	const [caKeyPw, setCaKeyPw] = useState('');
+	const [keyPw, setKeyPw] = useState('');
+	const [keyPwRepeat, setKeyPwRepeat] = useState('');
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 
@@ -108,6 +118,9 @@ function IssueIntermediateForm({
 		const d = parseInt(days, 10);
 		if (!d || d < 1) return setError(t('issueCa.errDays'));
 		if (certRepo.findByName(name.trim())) return setError(t('issueCa.errNameTaken'));
+		if (caEncrypted && !caKeyPw) return setError(t('issue.errCaPasswordRequired'));
+		if (keyPw && keyPw !== keyPwRepeat) return setError(t('createCa.errKeyPwMismatch'));
+		if (keyPw && keyPw.length < 4) return setError(t('createCa.errKeyPwShort'));
 
 		const trimmedPathLen = pathLen.trim();
 		let pl: number | undefined;
@@ -134,6 +147,9 @@ function IssueIntermediateForm({
 								emailAddress: email.trim() || undefined,
 								validityDays: d,
 								pathLenConstraint: pl,
+								algorithm,
+								caKeyPassword: caKeyPw || null,
+								keyPassword: keyPw || null,
 							}),
 						);
 					} catch (e) {
@@ -167,12 +183,16 @@ function IssueIntermediateForm({
 				{issuer && (
 					<Box marginBottom={1}>
 						<Text color="gray">{t('issue.issuedBy')} </Text>
-						<Text bold color="cyan">🔑 {issuer.name}</Text>
+						<Text bold color="cyan">{caEncrypted ? '🔐 ' : '🔑 '}{issuer.name}</Text>
 						<Text color="gray"> · CN={issuer.common_name}</Text>
 					</Box>
 				)}
-				<TextField id="name" label={t('issueCa.dbName')} value={name} onChange={setName} autoFocus placeholder="intermediate-ca" />
+				{caEncrypted && (
+					<PasswordField id="caKeyPw" label={t('issue.caKeyPassword')} value={caKeyPw} onChange={setCaKeyPw} placeholder={t('issue.caKeyPasswordHint')} />
+				)}
+				<TextField id="name" label={t('issueCa.dbName')} value={name} onChange={setName} autoFocus={!caEncrypted} placeholder="intermediate-ca" />
 				<TextField id="cn" label={t('issueCa.cn')} value={cn} onChange={setCn} placeholder="My Intermediate CA" />
+				<AlgorithmPicker id="algorithm" label={t('createCa.algorithm')} value={algorithm} onChange={setAlgorithm} />
 				<TextField id="org" label={t('issueCa.org')} value={org} onChange={setOrg} />
 				<TextField id="country" label={t('issueCa.country')} value={country} onChange={setCountry} />
 				<TextField id="state" label={t('issueCa.state')} value={state} onChange={setState} />
@@ -180,6 +200,11 @@ function IssueIntermediateForm({
 				<TextField id="email" label={t('issueCa.email')} value={email} onChange={setEmail} />
 				<TextField id="days" label={t('issueCa.days')} value={days} onChange={setDays} />
 				<TextField id="pathLen" label={t('issueCa.pathLen')} value={pathLen} onChange={setPathLen} placeholder={t('issueCa.pathLenPlaceholder')} />
+				<Box marginTop={1}>
+					<Text color="gray">{t('createCa.passphraseSection')}</Text>
+				</Box>
+				<PasswordField id="keyPw" label={t('createCa.keyPassword')} value={keyPw} onChange={setKeyPw} placeholder={t('createCa.keyPasswordHint')} />
+				<PasswordField id="keyPwRepeat" label={t('createCa.keyPasswordRepeat')} value={keyPwRepeat} onChange={setKeyPwRepeat} />
 				{error && (
 					<Box marginTop={1}>
 						<Text color="red">⚠ {error}</Text>
@@ -195,6 +220,7 @@ function IssueIntermediateForm({
 			<FunctionBar
 				keys={[
 					{key: 'Tab', label: t('fbar.fields')},
+					{key: 'Ctrl+K', label: t('fbar.algorithm')},
 					{key: 'Enter', label: t('fbar.submit')},
 					{key: 'Esc', label: t('fbar.back')},
 				]}

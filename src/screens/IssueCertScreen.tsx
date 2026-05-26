@@ -3,14 +3,16 @@ import {Box, Text, useInput} from 'ink';
 import Spinner from 'ink-spinner';
 import {Header} from '../components/Header.js';
 import {FunctionBar} from '../components/FunctionBar.js';
-import {TextField} from '../components/TextField.js';
+import {TextField, PasswordField} from '../components/TextField.js';
 import {Button} from '../components/Button.js';
 import {Menu} from '../components/Menu.js';
+import {AlgorithmPicker} from '../components/AlgorithmPicker.js';
 import {useArrowFocus} from '../components/Form.js';
 import {useApp} from '../state/AppContext.js';
 import {useT} from '../i18n/LocaleProvider.js';
 import {issueCert} from '../certs/generator.js';
 import {certRepo} from '../storage/repos.js';
+import {isEncryptedKey, KeyAlgorithm} from '../certs/keys.js';
 
 export function IssueCertScreen({certType}: {certType: 'server' | 'client'}) {
 	const {pop, replace, showToast} = useApp();
@@ -42,10 +44,10 @@ export function IssueCertScreen({certType}: {certType: 'server' | 'client'}) {
 				<Box padding={1}>
 					<Menu
 						items={cas.map(c => ({
-							label: `${c.key_pem ? '🔑 ' : '🔒 '}${c.name}`,
+							label: `${c.key_pem ? (isEncryptedKey(c.key_pem) ? '🔐 ' : '🔑 ') : '🔒 '}${c.name}`,
 							value: c.id,
 							hint: c.key_pem
-								? `CN=${c.common_name}`
+								? `CN=${c.common_name}` + (isEncryptedKey(c.key_pem) ? ' · ' + t('issue.caEncrypted') : '')
 								: `CN=${c.common_name} · ${t('issue.caNoKey')}`,
 							disabled: !c.key_pem,
 						}))}
@@ -88,11 +90,17 @@ function IssueForm({
 	useArrowFocus();
 	const t = useT();
 	const issuer = useMemo(() => certRepo.findById(caId), [caId]);
+	const caEncrypted = useMemo(
+		() => (issuer?.key_pem ? isEncryptedKey(issuer.key_pem) : false),
+		[issuer],
+	);
 	const [name, setName] = useState('');
 	const [cn, setCn] = useState('');
 	const [sans, setSans] = useState(certType === 'server' ? 'localhost,127.0.0.1' : '');
 	const [org, setOrg] = useState('');
 	const [days, setDays] = useState('365');
+	const [algorithm, setAlgorithm] = useState<KeyAlgorithm>('rsa-2048');
+	const [caKeyPw, setCaKeyPw] = useState('');
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 
@@ -107,6 +115,7 @@ function IssueForm({
 		const d = parseInt(days, 10);
 		if (!d) return setError(t('issue.errDays'));
 		if (certRepo.findByName(name.trim())) return setError(t('issue.errNameTaken'));
+		if (caEncrypted && !caKeyPw) return setError(t('issue.errCaPasswordRequired'));
 
 		setBusy(true);
 		try {
@@ -125,6 +134,8 @@ function IssueForm({
 								organizationName: org.trim() || undefined,
 								validityDays: d,
 								sans: sanList,
+								algorithm,
+								caKeyPassword: caKeyPw || null,
 							}),
 						);
 					} catch (e) {
@@ -158,12 +169,16 @@ function IssueForm({
 				{issuer && (
 					<Box marginBottom={1}>
 						<Text color="gray">{t('issue.issuedBy')} </Text>
-						<Text bold color="cyan">🔑 {issuer.name}</Text>
+						<Text bold color="cyan">{caEncrypted ? '🔐 ' : '🔑 '}{issuer.name}</Text>
 						<Text color="gray"> · CN={issuer.common_name}</Text>
 					</Box>
 				)}
-				<TextField id="name" label={t('issue.dbName')} value={name} onChange={setName} autoFocus placeholder={certType === 'server' ? 'srv-api' : 'user-alice'} />
+				{caEncrypted && (
+					<PasswordField id="caKeyPw" label={t('issue.caKeyPassword')} value={caKeyPw} onChange={setCaKeyPw} placeholder={t('issue.caKeyPasswordHint')} autoFocus />
+				)}
+				<TextField id="name" label={t('issue.dbName')} value={name} onChange={setName} autoFocus={!caEncrypted} placeholder={certType === 'server' ? 'srv-api' : 'user-alice'} />
 				<TextField id="cn" label={t('issue.cn')} value={cn} onChange={setCn} placeholder={certType === 'server' ? 'api.example.com' : 'alice@example.com'} />
+				<AlgorithmPicker id="algorithm" label={t('createCa.algorithm')} value={algorithm} onChange={setAlgorithm} />
 				{certType === 'server' && (
 					<TextField id="sans" label={t('issue.sans')} value={sans} onChange={setSans} placeholder="api.example.com,*.example.com,10.0.0.5" />
 				)}
@@ -184,6 +199,7 @@ function IssueForm({
 			<FunctionBar
 				keys={[
 					{key: 'Tab', label: t('fbar.fields')},
+					{key: 'Ctrl+K', label: t('fbar.algorithm')},
 					{key: 'Enter', label: t('fbar.submit')},
 					{key: 'Esc', label: t('fbar.back')},
 				]}

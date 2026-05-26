@@ -5,14 +5,22 @@ import {App} from './app.js';
 import {ensureRoot} from './storage/paths.js';
 import {closeContext} from './storage/db.js';
 import {createInputProxy, enableMouse, disableMouse} from './input/inputProxy.js';
+import {VERSION} from './version.js';
 
 ensureRoot();
 
 const args = process.argv.slice(2);
+if (args.includes('--version') || args.includes('-v')) {
+	process.stdout.write(`${VERSION}\n`);
+	process.exit(0);
+}
 if (args.includes('--help') || args.includes('-h')) {
 	process.stdout.write(
-		`secutor — interactive TUI certificate manager\n\n` +
-			`Usage:\n  secutor            run interactive UI\n  secutor --help     show this help\n\n` +
+		`secutor v${VERSION} — interactive TUI certificate manager\n\n` +
+			`Usage:\n` +
+			`  secutor              run interactive UI\n` +
+			`  secutor --help       show this help\n` +
+			`  secutor --version    print the version and exit\n\n` +
 			`Storage path: ~/.secutor (override with SECUTOR_HOME)\n`,
 	);
 	process.exit(0);

@@ -43,6 +43,19 @@ CREATE TABLE IF NOT EXISTS profiles (
   created_at TEXT NOT NULL,
   FOREIGN KEY(cert_id) REFERENCES certificates(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS ssh_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  algorithm TEXT NOT NULL,
+  comment TEXT,
+  public_key TEXT NOT NULL,
+  private_key TEXT NOT NULL,
+  encrypted INTEGER NOT NULL DEFAULT 0,
+  fingerprint TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ssh_keys_name ON ssh_keys(name);
 `;
 
 function migrate(db: Database.Database): void {
@@ -56,6 +69,10 @@ function migrate(db: Database.Database): void {
 	if (!have.has('revocation_reason')) {
 		db.exec('ALTER TABLE certificates ADD COLUMN revocation_reason TEXT');
 	}
+
+	// ssh_keys was added in a later version of the schema; the CREATE TABLE
+	// IF NOT EXISTS in SCHEMA handles new installs, but for older contexts
+	// without the table the migration is a no-op (the SCHEMA exec creates it).
 }
 
 export type OpenSession = {

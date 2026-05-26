@@ -24,6 +24,9 @@ type Action =
 	| 'verify'
 	| 'sni'
 	| 'audit'
+	| 'sign-file'
+	| 'verify-signature'
+	| 'ssh-keys'
 	| 'export'
 	| 'import'
 	| 'set-password'
@@ -56,6 +59,10 @@ export function MainMenuScreen() {
 		{label: '🌐  ' + t('main.sni'),             value: 'sni' as Action},
 		{label: '🩺  ' + t('main.audit'),           value: 'audit' as Action},
 		{label: '─────────────────────────',       value: 'sep3' as any, disabled: true},
+		{label: '✍   ' + t('main.signFile'),       value: 'sign-file' as Action},
+		{label: '🔎  ' + t('main.verifySignature'),value: 'verify-signature' as Action},
+		{label: '🔑  ' + t('main.sshKeys'),         value: 'ssh-keys' as Action},
+		{label: '─────────────────────────',       value: 'sep4' as any, disabled: true},
 		{label: '⤴   ' + t('main.exportStore'),    value: 'export' as Action},
 		{label: '⤵   ' + t('main.importStore'),    value: 'import' as Action},
 		{label: '🔑  ' + t('main.setPassword'),     value: 'set-password' as Action},
@@ -89,6 +96,9 @@ export function MainMenuScreen() {
 			case 'verify':        return push({kind: 'verify'});
 			case 'sni':           return push({kind: 'sni-search'});
 			case 'audit':         return push({kind: 'audit'});
+			case 'sign-file':     return push({kind: 'sign-file'});
+			case 'verify-signature': return push({kind: 'verify-signature'});
+			case 'ssh-keys':      return push({kind: 'ssh-keys'});
 			case 'export':        return push({kind: 'export-context'});
 			case 'import':        return push({kind: 'import-context'});
 			case 'set-password':  return push({kind: 'set-password', name: contextName!});

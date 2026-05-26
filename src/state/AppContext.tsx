@@ -23,6 +23,11 @@ export type Screen =
 	| {kind: 'export-profile'; id: number}
 	| {kind: 'sni-search'}
 	| {kind: 'audit'}
+	| {kind: 'sign-file'}
+	| {kind: 'verify-signature'}
+	| {kind: 'ssh-keys'}
+	| {kind: 'create-ssh-key'}
+	| {kind: 'ssh-key-details'; id: number}
 	| {kind: 'settings'};
 
 export type Toast = {kind: 'info' | 'error' | 'success'; message: string};

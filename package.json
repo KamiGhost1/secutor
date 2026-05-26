@@ -1,12 +1,14 @@
 {
     "name": "secutor",
-    "version": "1.0.5",
+    "version": "1.1.0",
     "description": "Interactive TUI certificate manager (CA, server, client, profiles)",
     "bin": {
         "secutor": "dist/cli.js"
     },
     "files": [
-        "dist"
+        "dist",
+        "LICENSE",
+        "README.md"
     ],
     "main": "dist/cli.js",
     "type": "module",
@@ -34,12 +36,15 @@
         "prepublishOnly": "npm run test && npm run build"
     },
     "dependencies": {
+        "asn1js": "^3.0.10",
         "better-sqlite3": "^11.10.0",
         "ink": "^5.0.1",
         "ink-select-input": "^6.0.0",
         "ink-spinner": "^5.0.0",
         "ink-text-input": "^6.0.0",
         "node-forge": "^1.3.1",
+        "pkijs": "^3.4.0",
+        "pvutils": "^1.1.5",
         "react": "^18.3.1"
     },
     "devDependencies": {
@@ -59,5 +64,5 @@
         "win32"
     ],
     "author": "kamighost",
-    "license": "MIT"
+    "license": "BSD-3-Clause"
 }

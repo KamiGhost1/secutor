@@ -150,11 +150,11 @@ function Pkcs12PasswordForm({
 		if (key.escape) onCancel();
 	});
 
-	const submit = () => {
+	const submit = async () => {
 		setError(null);
 		try {
 			const buf = fs.readFileSync(filePath);
-			const r = parsePkcs12(buf, pass);
+			const r = await parsePkcs12(buf, pass);
 			onParsed(r);
 		} catch (e: any) {
 			setError(e.message || t('importCert.pkcs12.cantDecrypt'));
