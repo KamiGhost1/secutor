@@ -1,6 +1,7 @@
 import React from 'react';
 import {Box, Text, useFocus, useInput} from 'ink';
 import {KeyAlgorithm, SIGNING_ALGORITHMS} from '../certs/keys.js';
+import {useReportFocus} from './ScrollableForm.js';
 
 export type AlgorithmPickerProps = {
 	label: string;
@@ -43,6 +44,7 @@ export function AlgorithmPicker({
 	arrowCycles = true,
 }: AlgorithmPickerProps) {
 	const {isFocused} = useFocus({id, autoFocus});
+	useReportFocus(id, isFocused);
 
 	useInput(
 		(input, key) => {
@@ -59,7 +61,7 @@ export function AlgorithmPicker({
 	);
 
 	return (
-		<Box flexDirection="row">
+		<Box flexDirection="row" flexShrink={0}>
 			<Box width={20} flexShrink={0}>
 				<Text color={isFocused ? 'cyan' : 'gray'}>
 					{isFocused ? '› ' : '  '}
@@ -71,6 +73,7 @@ export function AlgorithmPicker({
 				borderColor={isFocused ? 'cyan' : 'gray'}
 				paddingX={1}
 				width={40}
+				flexShrink={0}
 			>
 				<Text>
 					{PRETTY[value] ?? value}

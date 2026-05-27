@@ -6,6 +6,7 @@ import {FunctionBar} from '../components/FunctionBar.js';
 import {TextField, PasswordField} from '../components/TextField.js';
 import {Button} from '../components/Button.js';
 import {AlgorithmPicker} from '../components/AlgorithmPicker.js';
+import {ScrollableForm} from '../components/ScrollableForm.js';
 import {useArrowFocus} from '../components/Form.js';
 import {useApp} from '../state/AppContext.js';
 import {useT} from '../i18n/LocaleProvider.js';
@@ -92,32 +93,34 @@ export function CreateCAScreen() {
 	return (
 		<Box flexDirection="column" flexGrow={1}>
 			<Header title={t('createCa.title')} />
-			<Box padding={1} flexDirection="column">
-				<TextField id="name" label={t('createCa.dbName')} value={name} onChange={setName} autoFocus placeholder="root-ca" />
-				<TextField id="cn" label={t('createCa.cn')} value={cn} onChange={setCn} placeholder="My Root CA" />
-				<AlgorithmPicker id="algorithm" label={t('createCa.algorithm')} value={algorithm} onChange={setAlgorithm} />
-				<TextField id="org" label={t('createCa.org')} value={org} onChange={setOrg} />
-				<TextField id="country" label={t('createCa.country')} value={country} onChange={setCountry} />
-				<TextField id="state" label={t('createCa.state')} value={state} onChange={setState} />
-				<TextField id="city" label={t('createCa.city')} value={city} onChange={setCity} />
-				<TextField id="email" label={t('createCa.email')} value={email} onChange={setEmail} />
-				<TextField id="days" label={t('createCa.days')} value={days} onChange={setDays} />
-				<Box marginTop={1} marginBottom={0}>
-					<Text color="gray">{t('createCa.passphraseSection')}</Text>
-				</Box>
-				<PasswordField id="keyPw" label={t('createCa.keyPassword')} value={keyPw} onChange={setKeyPw} placeholder={t('createCa.keyPasswordHint')} />
-				<PasswordField id="keyPwRepeat" label={t('createCa.keyPasswordRepeat')} value={keyPwRepeat} onChange={setKeyPwRepeat} />
+			<Box padding={1} flexDirection="column" flexShrink={0}>
+				<ScrollableForm>
+					<TextField id="name" label={t('createCa.dbName')} value={name} onChange={setName} autoFocus placeholder="root-ca" />
+					<TextField id="cn" label={t('createCa.cn')} value={cn} onChange={setCn} placeholder="My Root CA" />
+					<AlgorithmPicker id="algorithm" label={t('createCa.algorithm')} value={algorithm} onChange={setAlgorithm} />
+					<TextField id="org" label={t('createCa.org')} value={org} onChange={setOrg} />
+					<TextField id="country" label={t('createCa.country')} value={country} onChange={setCountry} />
+					<TextField id="state" label={t('createCa.state')} value={state} onChange={setState} />
+					<TextField id="city" label={t('createCa.city')} value={city} onChange={setCity} />
+					<TextField id="email" label={t('createCa.email')} value={email} onChange={setEmail} />
+					<TextField id="days" label={t('createCa.days')} value={days} onChange={setDays} />
+					<Box flexDirection="row" flexShrink={0}>
+						<Text color="gray">{t('createCa.passphraseSection')}</Text>
+					</Box>
+					<PasswordField id="keyPw" label={t('createCa.keyPassword')} value={keyPw} onChange={setKeyPw} placeholder={t('createCa.keyPasswordHint')} />
+					<PasswordField id="keyPwRepeat" label={t('createCa.keyPasswordRepeat')} value={keyPwRepeat} onChange={setKeyPwRepeat} />
+					<Box flexDirection="row" flexShrink={0}>
+						<Button id="submit" label={t('common.create')} onPress={submit} />
+						<Box marginLeft={2} flexShrink={0}>
+							<Button id="cancel" label={t('common.cancel')} onPress={pop} />
+						</Box>
+					</Box>
+				</ScrollableForm>
 				{error && (
-					<Box marginTop={1}>
+					<Box marginTop={1} flexShrink={0}>
 						<Text color="red">⚠ {error}</Text>
 					</Box>
 				)}
-				<Box marginTop={1}>
-					<Button id="submit" label={t('common.create')} onPress={submit} />
-					<Box marginLeft={2}>
-						<Button id="cancel" label={t('common.cancel')} onPress={pop} />
-					</Box>
-				</Box>
 			</Box>
 			<FunctionBar
 				keys={[

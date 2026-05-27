@@ -7,6 +7,7 @@ import {TextField, PasswordField} from '../components/TextField.js';
 import {Button} from '../components/Button.js';
 import {Menu} from '../components/Menu.js';
 import {AlgorithmPicker} from '../components/AlgorithmPicker.js';
+import {ScrollableForm} from '../components/ScrollableForm.js';
 import {useArrowFocus} from '../components/Form.js';
 import {useApp} from '../state/AppContext.js';
 import {useT} from '../i18n/LocaleProvider.js';
@@ -179,43 +180,45 @@ function IssueIntermediateForm({
 	return (
 		<Box flexDirection="column" flexGrow={1}>
 			<Header title={t('issueCa.title')} />
-			<Box padding={1} flexDirection="column">
+			<Box padding={1} flexDirection="column" flexShrink={0}>
 				{issuer && (
-					<Box marginBottom={1}>
+					<Box marginBottom={1} flexShrink={0}>
 						<Text color="gray">{t('issue.issuedBy')} </Text>
 						<Text bold color="cyan">{caEncrypted ? '🔐 ' : '🔑 '}{issuer.name}</Text>
 						<Text color="gray"> · CN={issuer.common_name}</Text>
 					</Box>
 				)}
-				{caEncrypted && (
-					<PasswordField id="caKeyPw" label={t('issue.caKeyPassword')} value={caKeyPw} onChange={setCaKeyPw} placeholder={t('issue.caKeyPasswordHint')} />
-				)}
-				<TextField id="name" label={t('issueCa.dbName')} value={name} onChange={setName} autoFocus={!caEncrypted} placeholder="intermediate-ca" />
-				<TextField id="cn" label={t('issueCa.cn')} value={cn} onChange={setCn} placeholder="My Intermediate CA" />
-				<AlgorithmPicker id="algorithm" label={t('createCa.algorithm')} value={algorithm} onChange={setAlgorithm} />
-				<TextField id="org" label={t('issueCa.org')} value={org} onChange={setOrg} />
-				<TextField id="country" label={t('issueCa.country')} value={country} onChange={setCountry} />
-				<TextField id="state" label={t('issueCa.state')} value={state} onChange={setState} />
-				<TextField id="city" label={t('issueCa.city')} value={city} onChange={setCity} />
-				<TextField id="email" label={t('issueCa.email')} value={email} onChange={setEmail} />
-				<TextField id="days" label={t('issueCa.days')} value={days} onChange={setDays} />
-				<TextField id="pathLen" label={t('issueCa.pathLen')} value={pathLen} onChange={setPathLen} placeholder={t('issueCa.pathLenPlaceholder')} />
-				<Box marginTop={1}>
-					<Text color="gray">{t('createCa.passphraseSection')}</Text>
-				</Box>
-				<PasswordField id="keyPw" label={t('createCa.keyPassword')} value={keyPw} onChange={setKeyPw} placeholder={t('createCa.keyPasswordHint')} />
-				<PasswordField id="keyPwRepeat" label={t('createCa.keyPasswordRepeat')} value={keyPwRepeat} onChange={setKeyPwRepeat} />
+				<ScrollableForm>
+					{caEncrypted ? (
+						<PasswordField id="caKeyPw" label={t('issue.caKeyPassword')} value={caKeyPw} onChange={setCaKeyPw} placeholder={t('issue.caKeyPasswordHint')} />
+					) : null}
+					<TextField id="name" label={t('issueCa.dbName')} value={name} onChange={setName} autoFocus={!caEncrypted} placeholder="intermediate-ca" />
+					<TextField id="cn" label={t('issueCa.cn')} value={cn} onChange={setCn} placeholder="My Intermediate CA" />
+					<AlgorithmPicker id="algorithm" label={t('createCa.algorithm')} value={algorithm} onChange={setAlgorithm} />
+					<TextField id="org" label={t('issueCa.org')} value={org} onChange={setOrg} />
+					<TextField id="country" label={t('issueCa.country')} value={country} onChange={setCountry} />
+					<TextField id="state" label={t('issueCa.state')} value={state} onChange={setState} />
+					<TextField id="city" label={t('issueCa.city')} value={city} onChange={setCity} />
+					<TextField id="email" label={t('issueCa.email')} value={email} onChange={setEmail} />
+					<TextField id="days" label={t('issueCa.days')} value={days} onChange={setDays} />
+					<TextField id="pathLen" label={t('issueCa.pathLen')} value={pathLen} onChange={setPathLen} placeholder={t('issueCa.pathLenPlaceholder')} />
+					<Box flexShrink={0}>
+						<Text color="gray">{t('createCa.passphraseSection')}</Text>
+					</Box>
+					<PasswordField id="keyPw" label={t('createCa.keyPassword')} value={keyPw} onChange={setKeyPw} placeholder={t('createCa.keyPasswordHint')} />
+					<PasswordField id="keyPwRepeat" label={t('createCa.keyPasswordRepeat')} value={keyPwRepeat} onChange={setKeyPwRepeat} />
+					<Box flexDirection="row" flexShrink={0}>
+						<Button id="submit" label={t('issueCa.cta')} onPress={submit} />
+						<Box marginLeft={2} flexShrink={0}>
+							<Button id="cancel" label={t('common.cancel')} onPress={onCancel} />
+						</Box>
+					</Box>
+				</ScrollableForm>
 				{error && (
-					<Box marginTop={1}>
+					<Box marginTop={1} flexShrink={0}>
 						<Text color="red">⚠ {error}</Text>
 					</Box>
 				)}
-				<Box marginTop={1}>
-					<Button id="submit" label={t('issueCa.cta')} onPress={submit} />
-					<Box marginLeft={2}>
-						<Button id="cancel" label={t('common.cancel')} onPress={onCancel} />
-					</Box>
-				</Box>
 			</Box>
 			<FunctionBar
 				keys={[

@@ -7,6 +7,7 @@ import {TextField, PasswordField} from '../components/TextField.js';
 import {Button} from '../components/Button.js';
 import {Menu} from '../components/Menu.js';
 import {AlgorithmPicker} from '../components/AlgorithmPicker.js';
+import {ScrollableForm} from '../components/ScrollableForm.js';
 import {useArrowFocus} from '../components/Form.js';
 import {useApp} from '../state/AppContext.js';
 import {useT} from '../i18n/LocaleProvider.js';
@@ -165,36 +166,38 @@ function IssueForm({
 	return (
 		<Box flexDirection="column" flexGrow={1}>
 			<Header title={certType === 'server' ? t('issue.titleServer') : t('issue.titleClient')} />
-			<Box padding={1} flexDirection="column">
+			<Box padding={1} flexDirection="column" flexShrink={0}>
 				{issuer && (
-					<Box marginBottom={1}>
+					<Box marginBottom={1} flexShrink={0}>
 						<Text color="gray">{t('issue.issuedBy')} </Text>
 						<Text bold color="cyan">{caEncrypted ? '🔐 ' : '🔑 '}{issuer.name}</Text>
 						<Text color="gray"> · CN={issuer.common_name}</Text>
 					</Box>
 				)}
-				{caEncrypted && (
-					<PasswordField id="caKeyPw" label={t('issue.caKeyPassword')} value={caKeyPw} onChange={setCaKeyPw} placeholder={t('issue.caKeyPasswordHint')} autoFocus />
-				)}
-				<TextField id="name" label={t('issue.dbName')} value={name} onChange={setName} autoFocus={!caEncrypted} placeholder={certType === 'server' ? 'srv-api' : 'user-alice'} />
-				<TextField id="cn" label={t('issue.cn')} value={cn} onChange={setCn} placeholder={certType === 'server' ? 'api.example.com' : 'alice@example.com'} />
-				<AlgorithmPicker id="algorithm" label={t('createCa.algorithm')} value={algorithm} onChange={setAlgorithm} />
-				{certType === 'server' && (
-					<TextField id="sans" label={t('issue.sans')} value={sans} onChange={setSans} placeholder="api.example.com,*.example.com,10.0.0.5" />
-				)}
-				<TextField id="org" label={t('issue.org')} value={org} onChange={setOrg} />
-				<TextField id="days" label={t('issue.days')} value={days} onChange={setDays} />
+				<ScrollableForm>
+					{caEncrypted ? (
+						<PasswordField id="caKeyPw" label={t('issue.caKeyPassword')} value={caKeyPw} onChange={setCaKeyPw} placeholder={t('issue.caKeyPasswordHint')} autoFocus />
+					) : null}
+					<TextField id="name" label={t('issue.dbName')} value={name} onChange={setName} autoFocus={!caEncrypted} placeholder={certType === 'server' ? 'srv-api' : 'user-alice'} />
+					<TextField id="cn" label={t('issue.cn')} value={cn} onChange={setCn} placeholder={certType === 'server' ? 'api.example.com' : 'alice@example.com'} />
+					<AlgorithmPicker id="algorithm" label={t('createCa.algorithm')} value={algorithm} onChange={setAlgorithm} />
+					{certType === 'server' ? (
+						<TextField id="sans" label={t('issue.sans')} value={sans} onChange={setSans} placeholder="api.example.com,*.example.com,10.0.0.5" />
+					) : null}
+					<TextField id="org" label={t('issue.org')} value={org} onChange={setOrg} />
+					<TextField id="days" label={t('issue.days')} value={days} onChange={setDays} />
+					<Box flexDirection="row" flexShrink={0}>
+						<Button id="submit" label={t('issue.cta')} onPress={submit} />
+						<Box marginLeft={2} flexShrink={0}>
+							<Button id="cancel" label={t('common.cancel')} onPress={onCancel} />
+						</Box>
+					</Box>
+				</ScrollableForm>
 				{error && (
-					<Box marginTop={1}>
+					<Box marginTop={1} flexShrink={0}>
 						<Text color="red">⚠ {error}</Text>
 					</Box>
 				)}
-				<Box marginTop={1}>
-					<Button id="submit" label={t('issue.cta')} onPress={submit} />
-					<Box marginLeft={2}>
-						<Button id="cancel" label={t('common.cancel')} onPress={onCancel} />
-					</Box>
-				</Box>
 			</Box>
 			<FunctionBar
 				keys={[

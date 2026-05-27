@@ -1,6 +1,7 @@
 import React, {useRef} from 'react';
 import {Box, Text, useFocus, useInput} from 'ink';
 import TextInput from 'ink-text-input';
+import {useReportFocus} from './ScrollableForm.js';
 
 export type TextFieldProps = {
 	label: string;
@@ -26,6 +27,7 @@ export function TextField({
 	width = 40,
 }: TextFieldProps) {
 	const {isFocused} = useFocus({id, autoFocus});
+	useReportFocus(id, isFocused);
 	// ink-text-input only suppresses Ctrl+C; other Ctrl+letter combos are inserted
 	// as plain letters into the input. Track ctrl presses on this focused field and
 	// filter them out before the change reaches the consumer.
@@ -41,7 +43,7 @@ export function TextField({
 		onChange(next);
 	};
 	return (
-		<Box flexDirection="row">
+		<Box flexDirection="row" flexShrink={0}>
 			<Box width={20} flexShrink={0}>
 				<Text color={isFocused ? 'cyan' : 'gray'} wrap="truncate-end">
 					{isFocused ? '› ' : '  '}
@@ -53,6 +55,7 @@ export function TextField({
 				borderColor={isFocused ? 'cyan' : 'gray'}
 				paddingX={1}
 				width={width}
+				flexShrink={0}
 			>
 				{isFocused ? (
 					<TextInput
