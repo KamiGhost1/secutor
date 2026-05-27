@@ -8,7 +8,7 @@
 |--------------------------|----------------------------------------------------------------------------------------------------|
 | **Оператор CA**          | `secutor` (TUI) — создаёт CA, управляет контекстом                                                 |
 | **ACME-сервер**          | Docker-образ `secutor-acme` + том с контекстом + Docker secret с паролем                           |
-| **Клиент** (сервер app)  | либо встроенный CLI `secutor-acme-client`, либо `certbot`, либо `acme.sh`, либо k8s cert-manager   |
+| **Клиент** (сервер app)  | встроенный CLI `secutor-acme-client`, `certbot`, `acme.sh`, k8s cert-manager, либо Traefik         |
 | **Все**                  | root-CA сертификат в системном trust store                                                         |
 
 ## 1. Готовим CA в secutor
@@ -323,6 +323,131 @@ spec:
               name: nsupdate-tsig
               key: secret
 ```
+
+### 4.7. Traefik (встроенный ACME-резолвер)
+
+Traefik умеет работать с любым RFC 8555-совместимым ACME-сервером — Let's Encrypt тут ничем не привилегирован, достаточно указать `caServer` на ваш `secutor-acme`. Никаких изменений ни в Traefik, ни в `secutor-acme` не требуется — только конфиг.
+
+Поддерживаемые `secutor-acme` challenge'ы для Traefik:
+
+| Challenge       | Поддерживается | Когда использовать                                                       |
+|-----------------|----------------|--------------------------------------------------------------------------|
+| `httpChallenge` | да             | Traefik публично/в LAN слушает 80-й и сам отдаёт ответ на `/.well-known` |
+| `dnsChallenge`  | да             | Wildcards (`*.lan`), сервисы без 80-го порта, изолированные хосты         |
+| `tlsChallenge`  | **нет**        | TLS-ALPN-01 в `secutor-acme` не реализован                                |
+
+#### Статический конфиг (`traefik.yml`)
+
+```yaml
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+certificatesResolvers:
+  secutor:
+    acme:
+      caServer: https://acme.lan/directory
+      email: admin@lan
+      storage: /letsencrypt/acme.json
+      # выберите один:
+      httpChallenge:
+        entryPoint: web
+      # dnsChallenge:
+      #   provider: rfc2136
+      #   delayBeforeCheck: 10
+```
+
+DNS-01 через RFC 2136 требует ещё env-переменных в контейнере Traefik (см. [lego docs](https://go-acme.github.io/lego/dns/rfc2136/)):
+
+```yaml
+environment:
+  RFC2136_NAMESERVER: 10.0.0.53:53
+  RFC2136_TSIG_ALGORITHM: hmac-sha256.
+  RFC2136_TSIG_KEY: acme-update
+  RFC2136_TSIG_SECRET: <base64-secret>
+```
+
+#### Динамический конфиг — навешиваем резолвер на роутер
+
+```yaml
+http:
+  routers:
+    web-lan:
+      rule: "Host(`web.lan`)"
+      entryPoints: [websecure]
+      service: web-lan
+      tls:
+        certResolver: secutor
+        # для wildcard:
+        # domains:
+        #   - main: "lan"
+        #     sans: ["*.lan"]
+```
+
+В docker-labels:
+
+```yaml
+labels:
+  - "traefik.http.routers.web.rule=Host(`web.lan`)"
+  - "traefik.http.routers.web.entrypoints=websecure"
+  - "traefik.http.routers.web.tls=true"
+  - "traefik.http.routers.web.tls.certresolver=secutor"
+```
+
+#### Доверие к ACME-серверу со стороны Traefik
+
+Traefik (через lego) валидирует TLS-соединение к `caServer`. Варианты, отсортированные по предпочтительности:
+
+1. **`secutor-acme` за HTTPS с публично-доверенным сертификатом** — ничего настраивать не нужно.
+2. **`secutor-acme` за HTTPS с самоподписанным/secutor-выпущенным сертификатом** — положите `ca.pem` в системный trust store контейнера Traefik:
+   ```dockerfile
+   FROM traefik:v3
+   COPY ca.pem /usr/local/share/ca-certificates/secutor-root.crt
+   RUN update-ca-certificates
+   ```
+   или смонтируйте в `/etc/ssl/certs/` и пересоберите хеши через `c_rehash`.
+3. **`caServer: http://acme.lan:8443/directory` по чистому HTTP** — допустимо только внутри доверенной сети (LAN/VPN), где трафик и так зашифрован транспортом. Удобно для PoC, для прода — нежелательно.
+
+#### Доверие к выданным leaf-сертификатам у клиентов
+
+Traefik сам положит сертификат в `acme.json` и подставит его в TLS-handshake. Но браузерам и сервисам, которые ходят через Traefik, всё равно нужно доверять корню вашего CA — раздайте `ca.pem` так же, как описано в §3.
+
+#### EAB (External Account Binding)
+
+Если в `secutor-acme` включите EAB (опционально), Traefik умеет:
+
+```yaml
+certificatesResolvers:
+  secutor:
+    acme:
+      caServer: https://acme.lan/directory
+      eab:
+        kid: <key-id-from-secutor-acme>
+        hmacEncoded: <base64url-hmac-key>
+      # …
+```
+
+#### Проверка
+
+```bash
+# Traefik должен один раз сходить за директорией:
+docker logs traefik 2>&1 | grep -i acme
+# Должно быть: "Register..." → "Building ACME client" → "Trying to challenge..."
+
+# После успешного выпуска:
+openssl s_client -connect web.lan:443 -servername web.lan </dev/null \
+  | openssl x509 -noout -issuer -subject -dates
+# Issuer должен быть вашим secutor CA.
+```
+
+#### Подводные камни
+
+- **TLS-ALPN-01 не работает.** Если оставить в конфиге `tlsChallenge: {}`, Traefik будет упираться в ошибку валидации; используйте `httpChallenge` или `dnsChallenge`.
+- **HTTP-01 требует, чтобы `secutor-acme` сам мог достучаться до Traefik по 80-му порту** на имени, для которого выпускается сертификат. В LAN/VPN сценариях это часто проблема — для wildcard/изолированных хостов берите DNS-01.
+- **Wildcards только через DNS-01.** Это требование RFC 8555 §7.1.3, а не ограничение реализации.
+- **`acme.json` должен быть `chmod 600`** и лежать на persistent volume — иначе Traefik будет перевыпускать сертификат при каждом рестарте и быстро упрётся в `orderTtlSec`/rate-limit аккаунта.
 
 ## 5. Автообновление
 

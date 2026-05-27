@@ -1,6 +1,6 @@
 # secutor-acme
 
-ACME (RFC 8555) сервер поверх CA, управляемого `secutor`. Совместим с certbot, acme.sh, cert-manager.
+ACME (RFC 8555) сервер поверх CA, управляемого `secutor`. Совместим с certbot, acme.sh, cert-manager и Traefik (встроенный ACME-резолвер).
 
 **v0.1.0**: rabotaem end-to-end. RFC 8555 (DNS-01, HTTP-01), CRL, отзыв, RFC 2136 client-hook. Подтверждено E2E + реальным certbot 5.6.0.
 

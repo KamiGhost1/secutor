@@ -36,7 +36,7 @@ Then run:
 secutor
 ```
 
-CLI flags: `secutor --help`.
+CLI flags: `secutor --help`. For non-interactive signing and verification (CI / scripting) see [Non-interactive CLI](#non-interactive-cli).
 
 ## Requirements
 
@@ -100,6 +100,132 @@ Open from the contexts screen with `S`. Two options live there today:
 - **Show nginx / Traefik configs in export** — when enabled, the cert-export menu lists `nginx`, `Traefik (file provider)`, and `Traefik with ACME` formats. Off by default — flip it on once and they appear in every cert's `E` menu thereafter. Persisted to `~/.secutor/settings.json`.
 
 `Enter` toggles the focused option (and shows a toast); `Esc` returns to the previous screen.
+
+## Non-interactive CLI
+
+`secutor` also exposes the **sign** and **verify** operations as plain
+subcommands, so you can drive them from CI pipelines, shell scripts, or
+release tooling without ever entering the TUI. All passwords can be passed
+on the command line, read from stdin, or — if you are on a TTY — prompted
+for interactively.
+
+```bash
+secutor sign   <file> [options]
+secutor verify <file> [options]
+```
+
+Exit codes:
+
+- `0` — success / signature is valid
+- `1` — signature is invalid (wrong, mismatched, data tampered, fingerprint pin failed)
+- `2` — usage or I/O error (bad flag, missing file, wrong password, context not found)
+
+### `secutor sign <file>`
+
+Produces a signature for `<file>`. Two output modes:
+
+- **detached** (default) — writes a JSON manifest to `<file>.sig` (or to `--out`).
+- **bundle** — writes a single self-describing `.secsig` blob to `<file>.secsig` (or to `--out`) that contains both the manifest and the original data.
+
+The signer can come from a stored context or from raw PEM files on disk.
+
+**From a context (uses certificates already in `~/.secutor`):**
+
+```bash
+# Password as a flag (visible in process listings — fine for one-shot scripts):
+secutor sign release.tar.gz \
+    --context prod --cert release-signer \
+    --context-password "$CTX_PW"
+
+# Password piped on stdin (preferred for CI — does not leak to argv):
+echo "$CTX_PW" | secutor sign release.tar.gz \
+    --context prod --cert release-signer \
+    --context-password-stdin
+```
+
+If the *stored private key* is itself password-protected, pass
+`--key-password <pw>` or `--key-password-stdin` in addition to the context
+password. (Only one `*-password-stdin` flag can be used per invocation —
+stdin is single-use.)
+
+**From files (no context needed — works on any machine):**
+
+```bash
+# Plain PEM key:
+secutor sign release.tar.gz \
+    --key-file ./signer.key \
+    --cert-file ./signer.crt          # cert is optional; if given, it's
+                                       # embedded in the manifest so the
+                                       # verifier needs no separate copy.
+
+# Encrypted PKCS#8 key, password supplied as a flag:
+secutor sign release.tar.gz \
+    --key-file ./signer.key --cert-file ./signer.crt \
+    --key-password 's3cr3t'
+
+# Same, but reading the password from stdin:
+echo 's3cr3t' | secutor sign release.tar.gz \
+    --key-file ./signer.key --cert-file ./signer.crt \
+    --key-password-stdin
+
+# Bundle mode + explicit output path:
+secutor sign release.tar.gz \
+    --key-file ./signer.key --cert-file ./signer.crt \
+    --mode bundle --out release.tar.gz.secsig
+```
+
+If neither `--*-password` nor `--*-password-stdin` is supplied for an
+encrypted source and you're attached to a TTY, the password is prompted
+with characters masked. Without a TTY the command fails with a clear
+error instead of hanging.
+
+### `secutor verify <file>`
+
+By default the verifier trusts the certificate baked into the manifest —
+that's how the bundle mode works out of the box:
+
+```bash
+secutor verify release.tar.gz                # uses release.tar.gz.sig
+secutor verify release.tar.gz.secsig         # bundle mode, no --sig needed
+secutor verify release.tar.gz --sig path/to/manifest.json   # custom sig path
+```
+
+For real release validation you usually want to **pin** the signer
+yourself instead of trusting the manifest blindly. Two ways:
+
+**Pin a certificate / public-key PEM file:**
+
+```bash
+# Distribute signer.crt next to your release and verify against it:
+secutor verify release.tar.gz --signer-file ./signer.crt
+
+# Or pin by SHA-256 fingerprint only (no cert file needed):
+secutor verify release.tar.gz \
+    --fingerprint 4c9748f5e6a53f9855268a7794472c8650c1a13633d2102c21caef6ceba2c065
+```
+
+**Pin a certificate from a stored context:**
+
+```bash
+secutor verify release.tar.gz \
+    --context prod --cert release-signer \
+    --context-password "$CTX_PW"
+
+# Same, with the context password on stdin:
+echo "$CTX_PW" | secutor verify release.tar.gz \
+    --context prod --cert release-signer \
+    --context-password-stdin
+```
+
+`--signer-file` and `--context + --cert` cannot be combined. `--fingerprint`
+can be combined with any source as an extra pinning check.
+
+### Tip: bootstrap a portable verifier
+
+You can export a signer cert from the TUI (cert details → `E` → "Save to file")
+and ship just that `.crt` alongside your signature. The receiver verifies
+with `secutor verify file --signer-file signer.crt` and never needs your
+context.
 
 ## Keyboard
 
@@ -203,7 +329,9 @@ node dist/cli.js     # run the build
 
 ```
 src/
-├── cli.tsx                # entrypoint: raw stdin, alt-screen, SGR mouse setup
+├── cli.tsx                # entrypoint: dispatches to subcommands, otherwise starts the TUI
+├── cli/
+│   └── commands.ts        # non-interactive `secutor sign` / `secutor verify` (see Non-interactive CLI in README)
 ├── app.tsx                # screen router
 ├── certs/
 │   ├── core.ts            # X.509 builders: buildRootCa / buildIntermediateCa / buildLeafCert / resignCertificateCore
