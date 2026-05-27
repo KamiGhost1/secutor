@@ -1,4 +1,5 @@
 import React, {useMemo, useState} from 'react';
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {Box, Text, useInput} from 'ink';
@@ -6,7 +7,6 @@ import Spinner from 'ink-spinner';
 import {Header} from '../components/Header.js';
 import {FunctionBar} from '../components/FunctionBar.js';
 import {PasswordField} from '../components/TextField.js';
-import {Button} from '../components/Button.js';
 import {FileExplorer} from '../components/FileExplorer.js';
 import {useApp} from '../state/AppContext.js';
 import {useT} from '../i18n/LocaleProvider.js';
@@ -24,12 +24,49 @@ export function SshKeyDetailsScreen({id}: {id: number}) {
 	const [pw, setPw] = useState('');
 	const [error, setError] = useState<string | null>(null);
 
+	const doExportSsh = () => {
+		if (row && row.encrypted && !pw) {
+			setError(t('ssh.errPassphraseRequired'));
+			return;
+		}
+		setError(null);
+		setMode('busy');
+		setTimeout(() => {
+			try {
+				const out = exportToSshFolder({
+					name: row!.name,
+					privateKeyPem: row!.private_key,
+					publicKeyOpenssh: row!.public_key,
+					passphrase: row!.encrypted ? pw : null,
+					comment: row!.comment ?? '',
+				});
+				showToast({kind: 'success', message: t('ssh.exportedTo', {path: out.privateKeyPath})});
+				setMode('view');
+			} catch (e: any) {
+				setError(e.message);
+				setMode('export-ssh');
+			}
+		}, 10);
+	};
+
 	useInput((input, key) => {
 		if (mode === 'busy') return;
-		if (key.escape) return pop();
+		if (key.escape) {
+			if (mode === 'export-ssh' || mode === 'export-folder') {
+				setMode('view');
+				setError(null);
+				setPw('');
+			} else {
+				pop();
+			}
+			return;
+		}
 		if (mode === 'view') {
 			if (input === 'e' || input === 'E') setMode('export-ssh');
 			else if (input === 'x' || input === 'X') setMode('export-folder');
+		}
+		if (mode === 'export-ssh' && key.return) {
+			doExportSsh();
 		}
 	});
 
@@ -61,39 +98,6 @@ export function SshKeyDetailsScreen({id}: {id: number}) {
 							<Text color="red">⚠ {error}</Text>
 						</Box>
 					)}
-					<Box marginTop={1}>
-						<Button
-							id="go"
-							label={t('common.export')}
-							onPress={() => {
-								if (row.encrypted && !pw) {
-									setError(t('ssh.errPassphraseRequired'));
-									return;
-								}
-								setError(null);
-								setMode('busy');
-								setTimeout(() => {
-									try {
-										const out = exportToSshFolder({
-											name: row.name,
-											privateKeyPem: row.private_key,
-											publicKeyOpenssh: row.public_key,
-											passphrase: row.encrypted ? pw : null,
-											comment: row.comment ?? '',
-										});
-										showToast({kind: 'success', message: t('ssh.exportedTo', {path: out.privateKeyPath})});
-										setMode('view');
-									} catch (e: any) {
-										setError(e.message);
-										setMode('export-ssh');
-									}
-								}, 10);
-							}}
-						/>
-						<Box marginLeft={2}>
-							<Button id="cancel" label={t('common.cancel')} onPress={() => setMode('view')} />
-						</Box>
-					</Box>
 				</Box>
 				<FunctionBar keys={[{key: 'Enter', label: t('common.export')}, {key: 'Esc', label: t('fbar.back')}]} />
 			</Box>
@@ -105,7 +109,7 @@ export function SshKeyDetailsScreen({id}: {id: number}) {
 			<Box flexDirection="column" flexGrow={1}>
 				<Header title={t('ssh.savePrivateTitle')} />
 				<Box padding={1} flexDirection="column">
-					{row.encrypted && (
+					{!!row.encrypted && (
 						<PasswordField id="pw" label={t('ssh.passphraseToDecrypt')} value={pw} onChange={setPw} autoFocus />
 					)}
 					{error && (
@@ -125,7 +129,6 @@ export function SshKeyDetailsScreen({id}: {id: number}) {
 							setMode('busy');
 							setTimeout(() => {
 								try {
-									const fs = require('fs') as typeof import('fs');
 									const plain = isEncryptedKey(row.private_key)
 										? decryptPrivateKey(row.private_key, pw || null)
 										: row.private_key;

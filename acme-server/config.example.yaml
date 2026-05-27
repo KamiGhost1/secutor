@@ -1,0 +1,30 @@
+# secutor-acme configuration. Values here are overridden by SECUTOR_ACME_*
+# environment variables.
+
+baseUrl: https://acme.lan/
+contextDir: /secutor/context
+contextPasswordFile: /run/secrets/context_password
+caCertName: null            # null = first ca-type cert in the context; else name
+stateDb: /var/lib/secutor-acme/acme.db
+
+leafValidityDays: 90
+nonceTtlSec: 600
+orderTtlSec: 604800         # 7 days
+
+challenges:
+  dns01: true
+  http01: true
+  http01Port: 80
+
+# Per-zone DNS resolvers. First matching rule wins; "*" is the fallback.
+resolvers:
+  - zones: ["lan", "vpn.local"]
+    servers: ["10.0.0.53"]
+  - zones: ["*"]
+    servers: ["1.1.1.1", "8.8.8.8"]
+
+# Optional global allow-list. Identifiers outside it are rejected at newOrder.
+# allowList:
+#   dnsPatterns:
+#     - "*.lan"
+#     - "*.vpn.local"

@@ -2,7 +2,7 @@
 
 Interactive terminal UI for managing a private PKI plus modern crypto tooling: root and intermediate CAs, server and client certificates with RSA / ECDSA / Ed25519 keys, PKCS#12 profiles, full chain export, revocation with CRLs, file & application signing, and SSH key generation. Exports as a ready-to-use **nginx** server block or **Traefik** (file provider / ACME) bundle, with one-keystroke copy to the system clipboard. CAs can be protected with a passphrase. Everything lives in encrypted local SQLite "contexts" — no external services, no daemons.
 
-[![npm](https://img.shields.io/npm/v/secutor.svg)](https://www.npmjs.com/package/secutor)
+[![GitHub](https://img.shields.io/badge/GitHub-KamiGhost1%2Fsecutor-181717?logo=github)](https://github.com/KamiGhost1/secutor) [![npm](https://img.shields.io/npm/v/secutor.svg)](https://www.npmjs.com/package/secutor) 
 
 ## Highlights
 

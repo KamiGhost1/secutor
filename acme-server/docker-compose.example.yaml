@@ -1,0 +1,33 @@
+services:
+  acme:
+    build: .
+    image: secutor-acme:0.1.0
+    read_only: true
+    volumes:
+      - type: bind
+        source: ${HOME}/.secutor/contexts/prod
+        target: /secutor/context
+        read_only: true
+      - secutor-acme-data:/var/lib/secutor-acme
+      - ./config.example.yaml:/etc/secutor-acme/config.yaml:ro
+    environment:
+      SECUTOR_CONTEXT_DIR: /secutor/context
+      SECUTOR_CONTEXT_PASSWORD_FILE: /run/secrets/context_password
+      SECUTOR_ACME_DB: /var/lib/secutor-acme/acme.db
+      SECUTOR_ACME_CONFIG: /etc/secutor-acme/config.yaml
+      SECUTOR_ACME_BASE_URL: https://acme.lan/
+      SECUTOR_ACME_LISTEN: 0.0.0.0:8443
+    secrets:
+      - context_password
+    ports:
+      - "8443:8443"
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+secrets:
+  context_password:
+    file: ./secrets/context_password.txt
+
+volumes:
+  secutor-acme-data:
