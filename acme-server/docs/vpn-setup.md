@@ -165,7 +165,7 @@ services:
     entrypoint: ["node", "dist/client/index.js"]
     command:
       - "--directory"
-      - "https://acme.lan/directory"
+      - "http://acme.lan/directory"   # HTTP внутри WG — см. dns-acme-peer.md / deployment.md
       - "--domain"
       - "web.lan"
       - "--challenge"

@@ -28,6 +28,15 @@ export type Config = {
 		// If set, restrict identifiers globally (regardless of account).
 		dnsPatterns: string[]; // e.g. ["*.lan", "*.vpn.local"]
 	};
+	// Optional TLS for the ACME endpoint itself. ACME RFC 8555 §6.1 requires
+	// HTTPS, and most clients (lego/Traefik, certbot, acme.sh) refuse plain
+	// HTTP directories. If both files are set, the server starts as HTTPS.
+	// If both are unset, it stays plain HTTP (suitable behind an external
+	// reverse proxy that terminates TLS).
+	tls?: {
+		certFile: string;
+		keyFile: string;
+	};
 };
 
 const DEFAULTS: Partial<Config> = {
@@ -57,6 +66,25 @@ export function loadConfig(): {config: Config; contextPassword: string | null; c
 		fromFile = file.endsWith('.json') ? JSON.parse(text) : YAML.parse(text);
 	}
 
+	// TLS — either both env vars are set (HTTPS), or both fromFile.tls fields
+	// are set, or none at all (HTTP).
+	const tlsCertEnv = process.env.SECUTOR_ACME_TLS_CERT;
+	const tlsKeyEnv = process.env.SECUTOR_ACME_TLS_KEY;
+	let tls: Config['tls'] | undefined;
+	if (tlsCertEnv && tlsKeyEnv) {
+		tls = {certFile: tlsCertEnv, keyFile: tlsKeyEnv};
+	} else if (tlsCertEnv || tlsKeyEnv) {
+		throw new Error(
+			'SECUTOR_ACME_TLS_CERT and SECUTOR_ACME_TLS_KEY must be set together (or both unset)',
+		);
+	} else if (fromFile.tls?.certFile && fromFile.tls?.keyFile) {
+		tls = fromFile.tls;
+	} else if (fromFile.tls?.certFile || fromFile.tls?.keyFile) {
+		throw new Error(
+			'config.yaml: tls.certFile and tls.keyFile must be set together (or omit the tls block)',
+		);
+	}
+
 	const cfg: Config = {
 		...(DEFAULTS as Config),
 		...fromFile,
@@ -75,11 +103,30 @@ export function loadConfig(): {config: Config; contextPassword: string | null; c
 		nonceTtlSec: fromFile.nonceTtlSec ?? DEFAULTS.nonceTtlSec!,
 		orderTtlSec: fromFile.orderTtlSec ?? DEFAULTS.orderTtlSec!,
 		allowList: fromFile.allowList,
+		tls,
 	};
 
 	if (!cfg.baseUrl) throw new Error('SECUTOR_ACME_BASE_URL not set');
 	if (!cfg.contextDir) throw new Error('SECUTOR_CONTEXT_DIR not set');
 	if (!cfg.baseUrl.endsWith('/')) cfg.baseUrl += '/';
+
+	// Sanity check: if TLS is configured but baseUrl is http://, that's almost
+	// certainly a misconfiguration that will confuse ACME clients (directory
+	// returns http:// URLs while the server speaks HTTPS). Warn loudly.
+	if (cfg.tls && cfg.baseUrl.startsWith('http://')) {
+		console.warn(
+			`[secutor-acme] tls is configured but baseUrl is "${cfg.baseUrl}" (http://). ` +
+				`Clients will follow http:// URLs from /directory and fail to handshake. ` +
+				`Set baseUrl to https://...`,
+		);
+	}
+	if (!cfg.tls && cfg.baseUrl.startsWith('https://')) {
+		console.warn(
+			`[secutor-acme] baseUrl is "${cfg.baseUrl}" (https://) but no TLS configured ` +
+				`in secutor itself. This is fine ONLY if an external reverse proxy terminates ` +
+				`TLS in front of this server.`,
+		);
+	}
 
 	// Ensure state DB dir exists.
 	fs.mkdirSync(path.dirname(cfg.stateDb), {recursive: true});

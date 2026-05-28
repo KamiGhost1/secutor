@@ -289,16 +289,22 @@ services:
     # ports НЕ публикуем — все порты слушаются ВНУТРИ namespace
 
   traefik:
-    image: traefik:v3.1
+    image: traefik:v3.3       # v3.1 имеет баг с Docker API negotiation — см. типичные грабли
     container_name: traefik
     depends_on:
       wg:
-        condition: service_started
+        # ВАЖНО: именно service_healthy, не service_started — иначе Traefik
+        # может стартовать раньше, чем wg-quick поднимет интерфейс с адресом
+        # 10.x.x.x, и bind(10.x.x.x:80/443) упадёт с EADDRNOTAVAIL.
+        condition: service_healthy
     network_mode: "service:wg"
     command:
       # === провайдер: автообнаружение сервисов по docker labels ===
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
+      # ВАЖНО: подставь РЕАЛЬНОЕ имя сети, не оставляй как есть.
+      # Узнаётся через `docker network ls`. Формула: <имя-каталога-в-нижнем-регистре-без-дефисов>_<имя-сети-из-compose>
+      # Пример: каталог "wg-traefik" → проект "wgtraefik" → сеть "wgtraefik_internal"
       - --providers.docker.network=wgtraefik_internal
 
       # === entrypoints: слушаем ТОЛЬКО на адресе wg0 ===
@@ -310,16 +316,26 @@ services:
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
 
       # === ACME через внутренний CA ===
+      # ACME-эндпоинт по HTTPS — RFC 8555 §6.1 требует HTTPS, и lego (внутри
+      # Traefik) откажется работать с plain HTTP. У secutor есть встроенный
+      # TLS — см. dns-acme-peer.md, раздел "HTTP vs HTTPS".
       - --certificatesresolvers.hub.acme.email=admin@example.com
       - --certificatesresolvers.hub.acme.storage=/letsencrypt/acme.json
-      - --certificatesresolvers.hub.acme.caserver=https://acme.lan.vpn:8443/acme/acme/directory
-      - --certificatesresolvers.hub.acme.tlschallenge=true
+      # Если ACME живёт в ТОМ ЖЕ docker-compose (co-located), указывай 127.0.0.1:
+      #   https://127.0.0.1:8443/directory
+      # Если ACME на отдельной машине через VPN — по DNS-имени:
+      - --certificatesresolvers.hub.acme.caserver=https://acme.lan.vpn:8443/directory
+      # secutor поддерживает только http-01 и dns-01, НЕ tls-alpn-01.
+      # tlschallenge=true даст "unsupported challenge type" при выпуске.
+      - --certificatesresolvers.hub.acme.httpchallenge=true
+      - --certificatesresolvers.hub.acme.httpchallenge.entrypoint=web
 
       # === логи, чтобы было что смотреть при дебаге ===
       - --log.level=INFO
       - --accesslog=true
     environment:
-      # путь до корневого сертификата CA — чтобы lego/acme-клиент ему доверял
+      # lego должен доверять root CA, который подписал bootstrap-cert секутора.
+      # ca.pem отдаётся секутором по /ca.pem; скопируй один раз и подмонтируй сюда.
       - LEGO_CA_CERTIFICATES=/certs/hub-root.crt
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -378,7 +394,11 @@ services:
 
 ## Шаг 5. Trust anchor: корневой сертификат CA
 
-Внутренний ACME-сервер обычно использует приватный корневой сертификат (не из Let's Encrypt или другого публичного CA). `lego` (ACME-клиент Traefik) по умолчанию работает только с публично доверенными CA — для приватного нужно явно дать ему корень.
+> **Когда этот шаг нужен**: только если ACME-эндпоинт **по HTTPS** с приватным CA (схема B/C из [deployment.md](deployment.md#http-vs-https-на-acme-эндпоинте)). При HTTP-эндпоинте (схема A, дефолт) Traefik не делает TLS-handshake к ACME-серверу и в trust anchor для lego не нуждается — **пропусти этот шаг полностью**.
+>
+> Trust anchor на клиентских машинах (браузеры, curl) — другая история: он всегда нужен, чтобы клиенты доверяли **выпущенным** Traefik'ом сертификатам. Но это делается **на клиентах**, не на этой машине. Туда — см. [dns-acme-peer.md, Шаг 11](dns-acme-peer.md#шаг-11-регистрация-trust-anchor-у-клиентов).
+
+Внутренний ACME-сервер обычно использует приватный корневой сертификат (не из Let's Encrypt или другого публичного CA). `lego` (ACME-клиент Traefik) по умолчанию работает только с публично доверенными CA — для приватного **по HTTPS** нужно явно дать ему корень.
 
 1. Получи от админа хаба файл `hub-root.crt` в формате PEM:
    ```
@@ -402,17 +422,17 @@ services:
 cat hub-root.crt hub-intermediate.crt > traefik/hub-root.crt
 ```
 
-Если корневой сертификат лежит на хабе по фиксированному URL — можно автоматизировать:
+Скачать root прямо с ACME-эндпоинта секутора:
 ```bash
-curl -fsSL http://acme.lan.vpn/root.crt -o traefik/hub-root.crt
+curl -fskL https://acme.lan.vpn:8443/ca.pem -o traefik/hub-root.crt
 ```
-(только после того, как WG-туннель уже поднят).
+(`-k` для первого раза, потому что сертификат сервера сам подписан этим root'ом; после установки в trust store — без `-k`).
 
 ---
 
 ## Шаг 6. DNS внутри VPN
 
-Traefik в momentum запуска делает запрос к `https://acme.lan.vpn:8443/acme/acme/directory`. Чтобы это имя резолвилось, есть три пути:
+Traefik при запуске делает запрос к `https://acme.lan.vpn:8443/directory`. Чтобы это имя резолвилось, есть три пути:
 
 1. **Через `DNS = 10.10.0.1` в `wg0.conf`** (рекомендую). `wg-quick` пропишет VPN-DNS как системный резолвер внутри namespace wg-контейнера. Это и для Traefik сработает, потому что он в том же namespace.
 
@@ -489,7 +509,7 @@ docker compose exec wg ss -tlnp
 ### ACME-сервер виден из namespace?
 
 ```bash
-docker compose exec wg curl -v https://acme.lan.vpn:8443/acme/acme/directory
+docker compose exec wg curl -v https://acme.lan.vpn:8443/directory --cacert /certs/hub-root.crt
 # должен прийти JSON с endpoints
 ```
 
@@ -545,6 +565,82 @@ curl -v https://192.168.1.50/
 
 `docker compose up -d api` — Traefik подхватит новый контейнер автоматически и выпустит сертификат на `api.lan.vpn`. **Не забудь добавить A-запись `api.lan.vpn → 10.10.0.2` на DNS-сервере хаба.**
 
+### Бэкенды из других docker-compose стеков
+
+Часто бэкенды (приложения) уже живут в отдельных docker-compose файлах — например, Vaultwarden, Planka, Nextcloud каждый в своём каталоге. Их **не нужно** перетаскивать в общий compose с wg+traefik. Достаточно подключить к одной shared сети.
+
+Схема:
+
+```
+        ┌──────────────────────────────────┐
+        │ docker network "vpn_internal"     │
+        │ (external, создаётся один раз)    │
+        └───┬────────────┬─────────────┬───┘
+            │            │             │
+   ┌────────▼─────┐ ┌────▼─────┐ ┌────▼──────┐
+   │ services/    │ │ apps/    │ │ vaultwarden/│
+   │  - wg         │ │ - planka │ │ - bitwarden │
+   │  - traefik   │ │          │ │             │
+   │  - acme      │ │          │ │             │
+   └──────────────┘ └──────────┘ └─────────────┘
+   (compose-стек 1)  (стек 2)     (стек 3)
+```
+
+**Шаг 1**. Создай сеть один раз (вне любого compose):
+
+```bash
+docker network create vpn_internal
+```
+
+**Шаг 2**. В compose с wg+traefik объяви как external:
+
+```yaml
+networks:
+  internal:
+    external: true
+    name: vpn_internal
+
+services:
+  wg:
+    networks: [internal]
+  # traefik, coredns, acme — без networks: (наследуют от wg)
+```
+
+**Шаг 3**. В compose каждого бэкенда — то же самое:
+
+```yaml
+# планка/docker-compose.yml
+networks:
+  vpn:
+    external: true
+    name: vpn_internal
+
+services:
+  planka:
+    networks: [vpn]
+    labels:
+      - traefik.enable=true
+      - traefik.instance=vpn
+      - traefik.docker.network=vpn_internal           # обязательно при множественных сетях
+      - traefik.http.routers.planka.rule=Host(`planka.lan.vpn`)
+      - traefik.http.routers.planka.entrypoints=websecure
+      - traefik.http.routers.planka.tls.certresolver=hub
+      - traefik.http.services.planka.loadbalancer.server.port=1337
+```
+
+После `docker compose up -d` в каждом каталоге проверь связность:
+
+```bash
+docker network inspect vpn_internal --format '{{range .Containers}}{{.Name}} {{.IPv4Address}}{{println}}{{end}}'
+# должны быть видны и wg, и planka, и остальные бэкенды
+```
+
+Traefik найдёт `planka` по docker-DNS на `vpn_internal` и будет проксировать на него.
+
+**Важно**: на каждом бэкенде нужны:
+- `traefik.instance=vpn` — фильтр constraints (см. раздел про множественные Traefik'и ниже).
+- `traefik.docker.network=vpn_internal` — указывает Traefik'у, через какую сеть ходить (на случай, если бэкенд подключён к нескольким сетям).
+
 ---
 
 ## Расширения и опциональные блоки
@@ -592,6 +688,48 @@ curl -v https://192.168.1.50/
 
 Если внутренний ACME поддерживает DNS-01 challenge — можно выпустить `*.lan.vpn` одним сертификатом. Потребуется настроить DNS-провайдер в Traefik, в этом гайде не разворачиваю.
 
+### Несколько Traefik'ов на одном хосте
+
+Если на хосте уже работает другой Traefik (для публичных сервисов, легаси, или ещё для чего-то), и теперь ты добавляешь VPN-Traefik рядом — они оба видят **все** контейнеры на хосте через docker-socket и пытаются их роутить. Получается конфликт: чужие контейнеры с label'ами для другого Traefik'а попадают в наш и наоборот.
+
+Симптом в логах:
+```
+WRN Could not find network named "..." for container "/foo"
+ERR error="api is not enabled" routerName=dashboard@docker
+```
+
+Это означает «я подхватил labels чужого контейнера, но не могу их применить — он от другого Traefik'а».
+
+**Решение — `constraints` по label**. Каждый Traefik фильтрует контейнеры по уникальной метке, остальные игнорирует.
+
+В нашем VPN-Traefik:
+
+```yaml
+command:
+  - --providers.docker.constraints=Label(`traefik.instance`,`vpn`)
+```
+
+В **другом** Traefik (если ты им управляешь — добавь то же самое со своим значением):
+
+```yaml
+command:
+  - --providers.docker.constraints=Label(`traefik.instance`,`public`)
+```
+
+На бэкендах, которые должен брать VPN-Traefik:
+
+```yaml
+labels:
+  - traefik.enable=true
+  - traefik.instance=vpn          # ← фильтр для VPN-Traefik
+  - traefik.http.routers.app.rule=Host(`app.lan.vpn`)
+  - ...
+```
+
+Контейнер **без** правильного `traefik.instance` будет полностью проигнорирован — даже не залогируется warning. Так каждый Traefik видит только свой подмножество.
+
+**Безопасности ради**: рассмотри [docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy) — фильтрующий прокси над docker.sock, отдающий каждому Traefik'у только разрешённые endpoint'ы. Тогда Traefik не может ни стартовать контейнеры, ни читать секреты, ни ходить в чужой neighbour'у. Связка constraints + socket-proxy — стандарт для multi-tenant хостов.
+
 ---
 
 ## Типичные грабли
@@ -615,12 +753,143 @@ wg:
 
 ### `Unable to obtain ACME certificate: x509: certificate signed by unknown authority`
 
-`LEGO_CA_CERTIFICATES` не указан или файл не подмонтирован/пустой. Проверь:
+Вылетает только при HTTPS-варианте — `LEGO_CA_CERTIFICATES` не указан или файл не подмонтирован/пустой. Проверь:
 
 ```bash
 docker compose exec wg cat /certs/hub-root.crt | head -1
 # должно быть "-----BEGIN CERTIFICATE-----"
 ```
+
+При HTTP-варианте этой ошибки в принципе не будет — Traefik не делает TLS-handshake к ACME-серверу.
+
+### `urn:ietf:params:acme:error:incorrectResponse :: HTTP error: connect ECONNREFUSED <IP>:80`
+
+ACME-сервер делает http-01 challenge — стучит на `http://<домен>/.well-known/acme-challenge/<token>`, и получает ECONNREFUSED. На указанном IP никто не слушает порт 80.
+
+Самая частая причина — **race на старте**: Traefik стартует раньше, чем wg-quick поднимет `wg0` с адресом (например, `10.11.12.2`), и `bind(10.11.12.2:80)` падает с `EADDRNOTAVAIL`. Traefik живёт без entrypoint `web`. Лечится правильным `depends_on`:
+
+```yaml
+traefik:
+  depends_on:
+    wg:
+      condition: service_healthy     # НЕ service_started
+wg:
+  healthcheck:
+    test: ["CMD", "wg", "show", "wg0"]
+    interval: 5s
+    timeout: 3s
+    retries: 5
+```
+
+Альтернатива — биндить на «все интерфейсы», тогда race не страшен:
+```yaml
+- --entrypoints.web.address=:80                # без явного IP
+- --entrypoints.websecure.address=:443
+```
+
+Проверка:
+```bash
+docker compose exec wg ss -tlnp | grep -E ':(80|443)'
+# должны быть оба порта — если только 443, web entrypoint не открылся
+```
+
+Если порты на месте, но challenge всё равно отбивается — проверь, что глобальный redirect web→websecure не съедает challenge-путь:
+```bash
+curl -v http://<домен>/.well-known/acme-challenge/test
+# должно вернуться 404, а не 308 Permanent Redirect
+```
+Если редирект — поставь `permanent=false` или вынеси challenge на отдельный entrypoint.
+
+### `Unable to obtain ACME certificate: unsupported challenge type "tls-alpn-01"`
+
+В Traefik включён `tlschallenge=true`, а secutor поддерживает только **http-01** и **dns-01** (см. [`challenges.ts`](../src/server/challenges.ts)). Поменяй на http-01:
+
+```yaml
+- --certificatesresolvers.hub.acme.httpchallenge=true
+- --certificatesresolvers.hub.acme.httpchallenge.entrypoint=web
+```
+
+Или dns-01 для wildcard (требует BIND с TSIG, см. [vpn-setup.md](vpn-setup.md)).
+
+### `Unable to obtain ACME certificate: no such host: acme`
+
+Traefik не может разрешить hostname `acme`. Это бывает, когда `acme`-контейнер тоже использует `network_mode: service:wg` — тогда docker-DNS не выдаёт для него имя, потому что у него нет собственного network namespace. Все контейнеры в одном namespace видят друг друга только через **127.0.0.1**.
+
+Замени в `caserver` имя на loopback:
+```yaml
+- --certificatesresolvers.hub.acme.caserver=https://127.0.0.1:8443/directory
+```
+
+Это и есть «co-located» паттерн — самый прямой путь между контейнерами, шарящими namespace.
+
+### `HTTPS is required` или `tls: failed to verify certificate` от ACME
+
+Две родственные ошибки, оба означают рассогласование между секутором и Traefik'ом:
+
+1. **`HTTPS is required: http://acme.lan.vpn:8443/directory`** — lego (внутри Traefik) принципиально не работает с plain HTTP по RFC 8555 §6.1. Включи HTTPS в секуторе через `SECUTOR_ACME_TLS_CERT`/`KEY` (см. [dns-acme-peer.md, bootstrap](dns-acme-peer.md#получение-bootstrap-сертификата-для-acmelanvpn)) и поменяй caserver на `https://`.
+
+2. **`tls: failed to verify certificate: x509: certificate signed by unknown authority`** — секутор отвечает по HTTPS, но lego не доверяет root'у, которым подписан bootstrap-cert. Проброс root'а через `LEGO_CA_CERTIFICATES`:
+   ```yaml
+   environment:
+     - LEGO_CA_CERTIFICATES=/certs/hub-root.crt
+   volumes:
+     - ./traefik/hub-root.crt:/certs/hub-root.crt:ro
+   ```
+   Файл качается с самого секутора: `curl -kL https://acme.lan.vpn:8443/ca.pem -o ./traefik/hub-root.crt`.
+
+### Рассинхрон между `tls` и `baseUrl` в секуторе
+
+Если в `config.yaml` секутора стоит `tls.{certFile,keyFile}` (HTTPS-слушатель), но `baseUrl: http://...` — секутор запустится, но в `/directory` будет отдавать `http://` URL'ы клиентам. lego начнёт ходить по ним и упрётся в TLS-handshake. Секутор при таком конфиге пишет в stderr `[secutor-acme] tls is configured but baseUrl is "..." (http://)`.
+
+Лечение: `baseUrl` должен начинаться с `https://`, если включён встроенный TLS. И наоборот, при `baseUrl: https://...` без `tls` — конфиг для setup'а с внешним TLS-proxy.
+
+### `404 not found` от ACME-сервера на `/acme/acme/directory`
+
+У secutor directory лежит на `/directory`, без префикса `/acme/acme/`. Префикс `/acme/acme/` — это конвенция smallstep/step-ca, secutor её не использует.
+
+Поправь URL:
+```yaml
+- --certificatesresolvers.hub.acme.caserver=https://acme.lan.vpn:8443/directory
+```
+
+### `Could not find network named "<префикс>_internal"` или `WRN Defaulting to first available network`
+
+Два варианта причины:
+
+1. **Литеральный плейсхолдер из доки**. Строка `<префикс>_internal` — это пример, его нужно заменить на реальное имя docker-сети. Узнай через `docker network ls` и подставь.
+
+2. **Несколько Traefik'ов на хосте** видят чужие контейнеры. См. раздел [«Несколько Traefik'ов на одном хосте»](#несколько-traefikов-на-одном-хосте) выше — лечится через `constraints` по label.
+
+### `error="api is not enabled" routerName=dashboard@docker`
+
+Какой-то контейнер на хосте имеет label `traefik.http.routers.dashboard.*`, который попадает в наш Traefik, но у нас не включён `--api.dashboard=true`. Чаще всего это значит, что Traefik подцепил контейнер от **другого** Traefik-стека, в котором dashboard был сконфигурирован.
+
+Решение — те же `constraints` по label (см. выше). После их добавления Traefik перестанет видеть чужие контейнеры и эта ошибка пропадёт.
+
+### `client version 1.24 is too old. Minimum supported API version is 1.40`
+
+Эта ошибка — про **Docker-провайдер** Traefik, не про ACME. Traefik не может прочитать docker-socket для автодискавери бэкендов. Сам ACME при этом обычно работает (`hub.acme` provider в логах ОК).
+
+Причина: в старых релизах Traefik v3.x (включая v3.1) Docker SDK не делает version negotiation и шлёт API v1.24 (из 2016 года). Современные демоны (Docker 23+) требуют минимум 1.40.
+
+**Решение А — обновить Traefik** (рекомендую):
+```yaml
+traefik:
+  image: traefik:v3.3      # или новее
+```
+В v3.3+ авто-негоциация исправлена.
+
+**Решение Б — пин API-версии через env**:
+```yaml
+traefik:
+  environment:
+    - DOCKER_API_VERSION=1.45
+```
+Узнать поддерживаемую демоном:
+```bash
+docker version --format '{{.Server.APIVersion}}'
+```
+Ставь значение **не выше** этого.
 
 ### `Unable to obtain ACME certificate: ... no such host`
 

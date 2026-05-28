@@ -1,3 +1,4 @@
+import fs from 'fs';
 import Fastify from 'fastify';
 import {loadConfig, parseListen} from './config.js';
 import {loadCa} from './contextLoader.js';
@@ -27,14 +28,35 @@ async function main() {
 
 	const ctx: ServerCtx = {repos, nonces, urls, config, ca};
 
-	const app = Fastify({
+	// ACME RFC 8555 §6.1 requires HTTPS for the directory endpoint, and most
+	// ACME clients (lego/Traefik, certbot, acme.sh) refuse plain-HTTP servers.
+	// If tls.{certFile,keyFile} is set, start as HTTPS. Otherwise plain HTTP
+	// — intended only for setups with an external TLS-terminating proxy.
+	const fastifyOptions = {
 		logger: {
 			level: process.env.LOG_LEVEL ?? 'info',
 			redact: ['req.headers.authorization'],
 		},
 		bodyLimit: 1 * 1024 * 1024, // 1 MB — CSRs and JWS are small
 		trustProxy: true,
-	});
+		...(config.tls
+			? {
+					https: {
+						cert: fs.readFileSync(config.tls.certFile),
+						key: fs.readFileSync(config.tls.keyFile),
+					},
+			  }
+			: {}),
+	};
+
+	// `any` here because Fastify's overloads differentiate https/http via
+	// the literal presence of `https` in the options object, which TS can't
+	// see through our spread. Behaviour is the same; the type just narrows.
+	// We also coerce the returned instance back to the default-generic
+	// FastifyInstance so registerRoutes accepts it — the runtime API is
+	// identical between http and https, only the generic Server type differs.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const app = Fastify(fastifyOptions as any) as unknown as import('fastify').FastifyInstance;
 
 	// ACME content type for POST bodies.
 	app.addContentTypeParser(
@@ -67,6 +89,7 @@ async function main() {
 	app.log.info(
 		{
 			baseUrl: config.baseUrl,
+			scheme: config.tls ? 'https' : 'http',
 			signingCa: {
 				name: ca.name,
 				cn: ca.commonName,
@@ -78,11 +101,12 @@ async function main() {
 			dns01: config.challenges.dns01,
 			http01: config.challenges.http01,
 		},
-		`secutor-acme ready — signing as "${ca.name}" (CN=${ca.commonName}), ${
-			ca.chainDepth === 1
-				? 'root CA, no intermediates'
-				: `${ca.chainDepth - 1} intermediate(s) in chain`
-		}`,
+		`secutor-acme ready — listening ${config.tls ? 'HTTPS' : 'HTTP'} on ${host}:${port}, ` +
+			`signing as "${ca.name}" (CN=${ca.commonName}), ${
+				ca.chainDepth === 1
+					? 'root CA, no intermediates'
+					: `${ca.chainDepth - 1} intermediate(s) in chain`
+			}`,
 	);
 
 	const stop = async (sig: string) => {
