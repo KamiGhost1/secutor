@@ -8,6 +8,12 @@ import {NonceManager} from './nonce.js';
 import {Urls} from './urls.js';
 import {Worker} from './worker.js';
 import {registerRoutes, type ServerCtx} from './routes.js';
+import {startAdminServer} from './admin/index.js';
+import {AdminAuth} from './admin/auth.js';
+import {ExpireWorker} from './expireWorker.js';
+import {DnsProviderRegistry} from './dnsProviders.js';
+import {CaStore} from './caStore.js';
+import {ReissueWorker} from './reissueWorker.js';
 
 async function main() {
 	const {config, contextPassword, caKeyPassword} = loadConfig();
@@ -26,7 +32,8 @@ async function main() {
 	const nonces = new NonceManager(repos, config.nonceTtlSec);
 	const urls = new Urls(config.baseUrl);
 
-	const ctx: ServerCtx = {repos, nonces, urls, config, ca};
+	const dnsRegistry = config.dnsProviders ? new DnsProviderRegistry(config.dnsProviders) : undefined;
+	const ctx: ServerCtx = {repos, nonces, urls, config, ca, dnsRegistry};
 
 	// ACME RFC 8555 §6.1 requires HTTPS for the directory endpoint, and most
 	// ACME clients (lego/Traefik, certbot, acme.sh) refuse plain-HTTP servers.
@@ -73,14 +80,40 @@ async function main() {
 
 	registerRoutes(app, ctx);
 
-	const worker = new Worker(repos, config, accountId => {
-		const a = repos.getAccount(accountId);
-		return a ? a.jwk_thumbprint : null;
-	});
+	const worker = new Worker(
+		repos,
+		config,
+		accountId => {
+			const a = repos.getAccount(accountId);
+			return a ? a.jwk_thumbprint : null;
+		},
+		dnsRegistry,
+	);
 	worker.start();
+
+	// Background tick: orders/authorizations past expires_at → 'expired'. Cheap
+	// query running every 60s; needed so stats reflect "expired without
+	// finalize" rather than perpetual "pending".
+	const expireWorker = new ExpireWorker(repos);
+	expireWorker.start();
+
+	// Optional admin API on a separate listener.
+	let adminApp: import('fastify').FastifyInstance | null = null;
+	const caStore = new CaStore(ca);
+	const reissueWorker = new ReissueWorker(repos, ca);
+	reissueWorker.start();
+	if (config.admin) {
+		const auth = new AdminAuth(config.admin.trust);
+		adminApp = await startAdminServer({
+			repos, ca, config: config.admin, auth, caStore, reissueWorker,
+		});
+	}
 
 	app.addHook('onClose', async () => {
 		worker.stop();
+		expireWorker.stop();
+		reissueWorker.stop();
+		if (adminApp) await adminApp.close();
 		db.close();
 	});
 

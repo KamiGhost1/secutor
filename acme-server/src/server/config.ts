@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import YAML from 'yaml';
+import type {AdminConfig} from './admin/index.js';
+import type {DnsProviderConfig} from './dnsProviders.js';
 
 export type ResolverRule = {
 	zones: string[]; // glob-like: ["lan", "*.internal"] or ["*"] as default
@@ -37,6 +39,15 @@ export type Config = {
 		certFile: string;
 		keyFile: string;
 	};
+	// Optional admin API. When unset, no admin listener starts. When set, a
+	// separate fastify instance is bound on admin.listen with mTLS-only auth.
+	// See acme-server/src/server/admin/index.ts for the AdminConfig schema.
+	admin?: AdminConfig;
+	// Optional list of DNS providers. When set, clients can request
+	// `secutor.dnsPlacement = "server-managed"` in newOrder and the server
+	// publishes/cleans up TXT records on their behalf via the matching
+	// provider. Without this list, server-managed orders are rejected.
+	dnsProviders?: DnsProviderConfig[];
 };
 
 const DEFAULTS: Partial<Config> = {
@@ -104,6 +115,8 @@ export function loadConfig(): {config: Config; contextPassword: string | null; c
 		orderTtlSec: fromFile.orderTtlSec ?? DEFAULTS.orderTtlSec!,
 		allowList: fromFile.allowList,
 		tls,
+		admin: fromFile.admin,
+		dnsProviders: fromFile.dnsProviders,
 	};
 
 	if (!cfg.baseUrl) throw new Error('SECUTOR_ACME_BASE_URL not set');

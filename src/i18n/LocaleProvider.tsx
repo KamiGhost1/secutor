@@ -1,7 +1,7 @@
 import React, {createContext, useContext, useEffect, useMemo, useState} from 'react';
 import fs from 'fs';
 import path from 'path';
-import {ROOT_DIR, ensureRoot} from '../storage/paths.js';
+import {rootDir, ensureRoot} from '../storage/paths.js';
 import {en, StringKey, Strings} from './locales/en.js';
 import {ru} from './locales/ru.js';
 
@@ -9,11 +9,13 @@ export type Locale = 'en' | 'ru';
 
 const DICT: Record<Locale, Strings> = {en, ru};
 
-const LOCALE_FILE = path.join(ROOT_DIR, 'locale.json');
+function localeFile(): string {
+	return path.join(rootDir(), 'locale.json');
+}
 
 function readLocaleFromDisk(): Locale {
 	try {
-		const raw = JSON.parse(fs.readFileSync(LOCALE_FILE, 'utf8'));
+		const raw = JSON.parse(fs.readFileSync(localeFile(), 'utf8'));
 		if (raw?.locale === 'ru' || raw?.locale === 'en') return raw.locale;
 	} catch {}
 	return 'en';
@@ -22,7 +24,7 @@ function readLocaleFromDisk(): Locale {
 function writeLocaleToDisk(loc: Locale): void {
 	try {
 		ensureRoot();
-		fs.writeFileSync(LOCALE_FILE, JSON.stringify({locale: loc}));
+		fs.writeFileSync(localeFile(), JSON.stringify({locale: loc}));
 	} catch {}
 }
 

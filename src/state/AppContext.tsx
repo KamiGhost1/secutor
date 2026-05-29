@@ -28,6 +28,19 @@ export type Screen =
 	| {kind: 'ssh-keys'}
 	| {kind: 'create-ssh-key'}
 	| {kind: 'ssh-key-details'; id: number}
+	| {kind: 'transfer-entity'; transferKind: 'cert' | 'ssh' | 'profile'; id: number}
+	| {kind: 'import-bundle'}
+	| {kind: 'hubs'}
+	| {kind: 'add-hub'}
+	| {kind: 'remote-hub'; hubId: string}
+	| {kind: 'remote-ca-verify'; hubId: string}
+	| {kind: 'remote-certs'; hubId: string}
+	| {kind: 'remote-cert-details'; hubId: string; certId: string}
+	| {kind: 'remote-accounts'; hubId: string}
+	| {kind: 'remote-stats'; hubId: string}
+	| {kind: 'remote-audit'; hubId: string}
+	| {kind: 'remote-ca-rotate'; hubId: string}
+	| {kind: 'job-progress'; hubId: string; jobId: string}
 	| {kind: 'settings'};
 
 export type Toast = {kind: 'info' | 'error' | 'success'; message: string};

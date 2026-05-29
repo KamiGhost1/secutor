@@ -2,6 +2,14 @@ import React from 'react';
 import {Box, Text, useInput} from 'ink';
 import {useT} from '../i18n/LocaleProvider.js';
 
+/**
+ * Yes/no prompt. **Owns Esc and `n`/`y` on the screen it lives on.**
+ *
+ * GOTCHA — see the note next to `Menu.onCancel`. Do NOT also add a
+ * screen-level `useInput((_, k) => { if (k.escape) pop() })` while a
+ * `<Confirm onCancel={...} />` is mounted: Ink fires both handlers on
+ * the same Esc and you'll pop the route stack twice.
+ */
 export function Confirm({
 	message,
 	onConfirm,

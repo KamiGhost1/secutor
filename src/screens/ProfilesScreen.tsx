@@ -56,12 +56,16 @@ export function ProfilesScreen() {
 					onCancel={pop}
 					onAction={(input, _key, item) => {
 						if ((input === 'd' || input === 'D') && item) setDel(item.value as number);
+						else if ((input === 't' || input === 'T') && item) {
+							push({kind: 'transfer-entity', transferKind: 'profile', id: item.value as number});
+						}
 					}}
 				/>
 			</Box>
 			<FunctionBar
 				keys={[
 					{key: 'Enter', label: t('fbar.export')},
+					{key: 'T', label: t('fbar.transfer')},
 					{key: '/', label: t('fbar.search')},
 					{key: 'D', label: t('fbar.delete')},
 					{key: 'Esc', label: t('fbar.back')},

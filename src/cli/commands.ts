@@ -525,8 +525,10 @@ export async function runVerifyCommand(argv: string[]): Promise<number> {
 
 // ----------------------------- dispatcher -----------------------------
 
+import {runKeysCommand} from './keysCommands.js';
+
 export function isCliSubcommand(name: string | undefined): boolean {
-	return name === 'sign' || name === 'verify';
+	return name === 'sign' || name === 'verify' || name === 'keys';
 }
 
 export async function runCli(argv: string[]): Promise<number> {
@@ -534,6 +536,7 @@ export async function runCli(argv: string[]): Promise<number> {
 	try {
 		if (cmd === 'sign') return await runSignCommand(rest);
 		if (cmd === 'verify') return await runVerifyCommand(rest);
+		if (cmd === 'keys') return await runKeysCommand(rest);
 		throw new UsageError(`Unknown command: ${cmd}`);
 	} catch (err: any) {
 		if (err instanceof UsageError) {

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import {ROOT_DIR, ensureRoot} from './paths.js';
+import {rootDir, ensureRoot} from './paths.js';
 
 export type Settings = {
 	showWebConfigs: boolean;
@@ -10,11 +10,13 @@ const DEFAULTS: Settings = {
 	showWebConfigs: false,
 };
 
-const FILE = path.join(ROOT_DIR, 'settings.json');
+function settingsFile(): string {
+	return path.join(rootDir(), 'settings.json');
+}
 
 export function readSettings(): Settings {
 	try {
-		const raw = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+		const raw = JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
 		return {...DEFAULTS, ...raw};
 	} catch {
 		return {...DEFAULTS};
@@ -24,7 +26,7 @@ export function readSettings(): Settings {
 export function writeSettings(s: Settings): void {
 	try {
 		ensureRoot();
-		fs.writeFileSync(FILE, JSON.stringify(s, null, 2));
+		fs.writeFileSync(settingsFile(), JSON.stringify(s, null, 2));
 	} catch {}
 }
 

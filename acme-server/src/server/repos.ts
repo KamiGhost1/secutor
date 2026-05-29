@@ -7,16 +7,25 @@ export type AccountRow = {
 	jwk_thumbprint: string;
 	jwk_json: string;
 	contact_json: string | null;
-	status: string;
+	status: string; // 'valid' | 'deactivated' | 'banned'
 	terms_agreed: number;
 	allow_list_json: string | null;
 	created_at: string;
+	deactivated_at?: string | null;
 };
+
+export type OrderStatus =
+	| 'pending'
+	| 'ready'
+	| 'processing'
+	| 'valid'
+	| 'invalid'
+	| 'expired';
 
 export type OrderRow = {
 	id: string;
 	account_id: string;
-	status: 'pending' | 'ready' | 'processing' | 'valid' | 'invalid';
+	status: OrderStatus;
 	identifiers_json: string;
 	not_before: string | null;
 	not_after: string | null;
@@ -25,6 +34,17 @@ export type OrderRow = {
 	certificate_id: string | null;
 	csr_der: Buffer | null;
 	created_at: string;
+	dns_placement?: 'client' | 'server-managed' | null;
+};
+
+export type DnsPlacementRow = {
+	id: string;
+	challenge_id: string;
+	record_name: string;
+	record_value: string;
+	provider_label: string;
+	placed_at: string;
+	cleaned_at: string | null;
 };
 
 export type AuthzRow = {
@@ -64,6 +84,11 @@ export type CertRow = {
 	revoked_at: string | null;
 	revocation_reason: number | null;
 	issued_at: string;
+	revoked_by?: string | null;
+	revoke_event_id?: string | null;
+	/** JSON array of dns identifiers (wildcards keep `*.` prefix). NULL on rows from
+	 * pre-migration-0005 deployments — backfill runs once at startup. */
+	identifiers_json?: string | null;
 };
 
 export class Repos {
@@ -108,6 +133,7 @@ export class Repos {
 		notBefore: string | null;
 		notAfter: string | null;
 		ttlSec: number;
+		dnsPlacement?: 'client' | 'server-managed';
 	}): OrderRow {
 		const row: OrderRow = {
 			id: ulid(),
@@ -121,11 +147,12 @@ export class Repos {
 			certificate_id: null,
 			csr_der: null,
 			created_at: nowIso(),
+			dns_placement: opts.dnsPlacement ?? 'client',
 		};
 		this.db
 			.prepare(
-				`INSERT INTO orders(id,account_id,status,identifiers_json,not_before,not_after,expires_at,error_json,certificate_id,csr_der,created_at)
-				 VALUES(@id,@account_id,@status,@identifiers_json,@not_before,@not_after,@expires_at,@error_json,@certificate_id,@csr_der,@created_at)`,
+				`INSERT INTO orders(id,account_id,status,identifiers_json,not_before,not_after,expires_at,error_json,certificate_id,csr_der,created_at,dns_placement)
+				 VALUES(@id,@account_id,@status,@identifiers_json,@not_before,@not_after,@expires_at,@error_json,@certificate_id,@csr_der,@created_at,@dns_placement)`,
 			)
 			.run(row);
 		return row;
@@ -133,7 +160,7 @@ export class Repos {
 	getOrder(id: string): OrderRow | undefined {
 		return this.db.prepare('SELECT * FROM orders WHERE id=?').get(id) as OrderRow | undefined;
 	}
-	setOrderStatus(id: string, status: OrderRow['status'], err?: object): void {
+	setOrderStatus(id: string, status: OrderStatus, err?: object): void {
 		this.db
 			.prepare('UPDATE orders SET status=?, error_json=? WHERE id=?')
 			.run(status, err ? JSON.stringify(err) : null, id);
@@ -271,6 +298,10 @@ export class Repos {
 		chainPem: string;
 		notBefore: string;
 		notAfter: string;
+		/** Optional explicit identifiers. If omitted, the value is left NULL
+		 * and reconstructed by the next listCertificates() call (or the
+		 * 0005 backfill at startup). New writers — always pass it. */
+		identifiers?: string[];
 	}): CertRow {
 		const row: CertRow = {
 			id: ulid(),
@@ -285,11 +316,12 @@ export class Repos {
 			revoked_at: null,
 			revocation_reason: null,
 			issued_at: nowIso(),
+			identifiers_json: opts.identifiers ? JSON.stringify(opts.identifiers) : null,
 		};
 		this.db
 			.prepare(
-				`INSERT INTO certificates(id,order_id,account_id,serial_hex,pem,chain_pem,not_before,not_after,revoked,revoked_at,revocation_reason,issued_at)
-				 VALUES(@id,@order_id,@account_id,@serial_hex,@pem,@chain_pem,@not_before,@not_after,@revoked,@revoked_at,@revocation_reason,@issued_at)`,
+				`INSERT INTO certificates(id,order_id,account_id,serial_hex,pem,chain_pem,not_before,not_after,revoked,revoked_at,revocation_reason,issued_at,identifiers_json)
+				 VALUES(@id,@order_id,@account_id,@serial_hex,@pem,@chain_pem,@not_before,@not_after,@revoked,@revoked_at,@revocation_reason,@issued_at,@identifiers_json)`,
 			)
 			.run(row);
 		return row;
@@ -302,12 +334,13 @@ export class Repos {
 			| CertRow
 			| undefined;
 	}
-	revokeCert(id: string, reason: number): void {
+	revokeCert(id: string, reason: number, by?: string, eventId?: string): void {
 		this.db
 			.prepare(
-				'UPDATE certificates SET revoked=1, revoked_at=?, revocation_reason=? WHERE id=?',
+				`UPDATE certificates SET revoked=1, revoked_at=?, revocation_reason=?, revoked_by=?, revoke_event_id=?
+				 WHERE id=?`,
 			)
-			.run(nowIso(), reason, id);
+			.run(nowIso(), reason, by ?? null, eventId ?? null, id);
 	}
 
 	// ---- audit ----
@@ -318,14 +351,15 @@ export class Repos {
 		target?: string | null;
 		ip?: string | null;
 		details?: object;
-	}): void {
+	}): string {
+		const id = ulid();
 		this.db
 			.prepare(
 				`INSERT INTO audit_log(id,ts,actor_type,actor_id,action,target,ip,details_json)
 				 VALUES(?,?,?,?,?,?,?,?)`,
 			)
 			.run(
-				ulid(),
+				id,
 				nowIso(),
 				opts.actorType,
 				opts.actorId ?? null,
@@ -334,5 +368,510 @@ export class Repos {
 				opts.ip ?? null,
 				opts.details ? JSON.stringify(opts.details) : null,
 			);
+		return id;
+	}
+
+	/* ──────────────────── admin-API helpers ──────────────────── */
+
+	listAccounts(opts?: {limit?: number; offset?: number}): AccountRow[] {
+		const limit = Math.min(opts?.limit ?? 200, 500);
+		const offset = opts?.offset ?? 0;
+		return this.db
+			.prepare('SELECT * FROM accounts ORDER BY created_at DESC LIMIT ? OFFSET ?')
+			.all(limit, offset) as AccountRow[];
+	}
+
+	updateAccount(id: string, patch: {status?: string; allowList?: string[] | null; contact?: string[] | null}): void {
+		const sets: string[] = [];
+		const args: any[] = [];
+		if (patch.status !== undefined) {
+			sets.push('status=?');
+			args.push(patch.status);
+			if (patch.status !== 'valid') {
+				sets.push('deactivated_at=?');
+				args.push(nowIso());
+			} else {
+				sets.push('deactivated_at=NULL');
+			}
+		}
+		if (patch.allowList !== undefined) {
+			sets.push('allow_list_json=?');
+			args.push(patch.allowList ? JSON.stringify(patch.allowList) : null);
+		}
+		if (patch.contact !== undefined) {
+			sets.push('contact_json=?');
+			args.push(patch.contact ? JSON.stringify(patch.contact) : null);
+		}
+		if (!sets.length) return;
+		args.push(id);
+		this.db.prepare(`UPDATE accounts SET ${sets.join(', ')} WHERE id=?`).run(...args);
+	}
+
+	listCertificates(opts: {
+		limit?: number;
+		offset?: number;
+		accountId?: string;
+		revoked?: boolean;
+		identifier?: string;
+		issuedAfter?: string;
+		issuedBefore?: string;
+		expiresBefore?: string;
+		serialHex?: string;
+	}): Array<CertRow & {identifiers: string[]}> {
+		const limit = Math.min(opts.limit ?? 100, 500);
+		const offset = opts.offset ?? 0;
+		const where: string[] = [];
+		const args: any[] = [];
+		if (opts.accountId) { where.push('account_id=?'); args.push(opts.accountId); }
+		if (opts.revoked !== undefined) { where.push('revoked=?'); args.push(opts.revoked ? 1 : 0); }
+		if (opts.issuedAfter) { where.push('issued_at>=?'); args.push(opts.issuedAfter); }
+		if (opts.issuedBefore) { where.push('issued_at<?'); args.push(opts.issuedBefore); }
+		if (opts.expiresBefore) { where.push('not_after<?'); args.push(opts.expiresBefore); }
+		if (opts.serialHex) { where.push('serial_hex=?'); args.push(opts.serialHex); }
+		if (opts.identifier) {
+			// Substring-match on the JSON array. Quotes scope the match to a
+			// single complete identifier — `?identifier=lan.vpn` does NOT
+			// match `svc.lan.vpn` (only the exact value); use `*.lan.vpn`
+			// explicitly to match a wildcard entry.
+			where.push('identifiers_json LIKE ?');
+			args.push(`%"${opts.identifier}"%`);
+		}
+		const sql =
+			`SELECT * FROM certificates` +
+			(where.length ? ` WHERE ${where.join(' AND ')}` : '') +
+			` ORDER BY issued_at DESC LIMIT ? OFFSET ?`;
+		args.push(limit, offset);
+		const rows = this.db.prepare(sql).all(...args) as CertRow[];
+		return rows.map(r => ({...r, identifiers: parseIdentifiers(r.identifiers_json)}));
+	}
+
+	/** Returns a row with `identifiers: string[]` (always present, possibly empty). */
+	getCertWithIdentifiers(id: string): (CertRow & {identifiers: string[]}) | undefined {
+		const row = this.getCert(id);
+		if (!row) return undefined;
+		return {...row, identifiers: parseIdentifiers(row.identifiers_json)};
+	}
+
+	listOrders(opts: {
+		limit?: number;
+		offset?: number;
+		status?: OrderStatus;
+		accountId?: string;
+		since?: string;
+		until?: string;
+	}): OrderRow[] {
+		const limit = Math.min(opts.limit ?? 100, 500);
+		const offset = opts.offset ?? 0;
+		const where: string[] = [];
+		const args: any[] = [];
+		if (opts.status) { where.push('status=?'); args.push(opts.status); }
+		if (opts.accountId) { where.push('account_id=?'); args.push(opts.accountId); }
+		if (opts.since) { where.push('created_at>=?'); args.push(opts.since); }
+		if (opts.until) { where.push('created_at<?'); args.push(opts.until); }
+		const sql =
+			`SELECT * FROM orders` +
+			(where.length ? ` WHERE ${where.join(' AND ')}` : '') +
+			` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+		args.push(limit, offset);
+		return this.db.prepare(sql).all(...args) as OrderRow[];
+	}
+
+	listAuditLog(opts: {
+		limit?: number;
+		offset?: number;
+		action?: string;
+		actorId?: string;
+		target?: string;
+		since?: string;
+	}): Array<{
+		id: string;
+		ts: string;
+		actor_type: string;
+		actor_id: string | null;
+		action: string;
+		target: string | null;
+		ip: string | null;
+		details_json: string | null;
+	}> {
+		const limit = Math.min(opts.limit ?? 100, 500);
+		const offset = opts.offset ?? 0;
+		const where: string[] = [];
+		const args: any[] = [];
+		if (opts.action) { where.push('action=?'); args.push(opts.action); }
+		if (opts.actorId) { where.push('actor_id=?'); args.push(opts.actorId); }
+		if (opts.target) { where.push('target=?'); args.push(opts.target); }
+		if (opts.since) { where.push('ts>=?'); args.push(opts.since); }
+		const sql =
+			`SELECT * FROM audit_log` +
+			(where.length ? ` WHERE ${where.join(' AND ')}` : '') +
+			` ORDER BY ts DESC LIMIT ? OFFSET ?`;
+		args.push(limit, offset);
+		return this.db.prepare(sql).all(...args) as any;
+	}
+
+	/* ──────────── stats ──────────── */
+
+	countOrdersByStatus(opts: {since?: string; until?: string}): Record<OrderStatus, number> & {total: number} {
+		const where: string[] = [];
+		const args: any[] = [];
+		if (opts.since) { where.push('created_at>=?'); args.push(opts.since); }
+		if (opts.until) { where.push('created_at<?'); args.push(opts.until); }
+		const w = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+		const rows = this.db
+			.prepare(`SELECT status, COUNT(*) AS n FROM orders${w} GROUP BY status`)
+			.all(...args) as Array<{status: OrderStatus; n: number}>;
+		const out = {
+			pending: 0, ready: 0, processing: 0, valid: 0, invalid: 0, expired: 0,
+			total: 0,
+		} as Record<OrderStatus, number> & {total: number};
+		for (const r of rows) {
+			out[r.status] = r.n;
+			out.total += r.n;
+		}
+		return out;
+	}
+
+	bucketOrders(opts: {since?: string; until?: string; bucket: 'day' | 'hour'}): Array<{
+		ts: string;
+		total: number;
+		valid: number;
+		invalid: number;
+		expired: number;
+	}> {
+		const fmt = opts.bucket === 'hour' ? '%Y-%m-%d %H:00' : '%Y-%m-%d';
+		const where: string[] = [];
+		const args: any[] = [];
+		if (opts.since) { where.push('created_at>=?'); args.push(opts.since); }
+		if (opts.until) { where.push('created_at<?'); args.push(opts.until); }
+		const w = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+		return this.db
+			.prepare(
+				`SELECT strftime('${fmt}', created_at) AS ts,
+				        COUNT(*) AS total,
+				        SUM(CASE WHEN status='valid'   THEN 1 ELSE 0 END) AS valid,
+				        SUM(CASE WHEN status='invalid' THEN 1 ELSE 0 END) AS invalid,
+				        SUM(CASE WHEN status='expired' THEN 1 ELSE 0 END) AS expired
+				   FROM orders${w}
+				  GROUP BY ts ORDER BY ts ASC`,
+			)
+			.all(...args) as any;
+	}
+
+	failureBreakdown(opts: {since?: string; until?: string}): {
+		totalInvalid: number;
+		byProblemType: Array<{type: string; count: number}>;
+		byChallengeType: Record<string, number>;
+		topFailingIdentifiers: Array<{value: string; count: number}>;
+	} {
+		const where: string[] = [];
+		const args: any[] = [];
+		if (opts.since) { where.push('o.created_at>=?'); args.push(opts.since); }
+		if (opts.until) { where.push('o.created_at<?'); args.push(opts.until); }
+		const w = where.length ? ` AND ${where.join(' AND ')}` : '';
+		const totalRow = this.db
+			.prepare(`SELECT COUNT(*) AS n FROM orders o WHERE o.status='invalid'${w}`)
+			.get(...args) as {n: number};
+
+		// Problem types from orders.error_json.type. SQLite has json_extract.
+		const probRows = this.db
+			.prepare(
+				`SELECT json_extract(o.error_json, '$.type') AS type, COUNT(*) AS n
+				   FROM orders o WHERE o.status='invalid' AND o.error_json IS NOT NULL${w}
+				  GROUP BY type ORDER BY n DESC LIMIT 20`,
+			)
+			.all(...args) as Array<{type: string | null; n: number}>;
+
+		const chRows = this.db
+			.prepare(
+				`SELECT ch.type AS type, COUNT(*) AS n
+				   FROM challenges ch
+				   JOIN authorizations az ON az.id = ch.authz_id
+				   JOIN orders o ON o.id = az.order_id
+				  WHERE ch.status='invalid'${w}
+				  GROUP BY ch.type`,
+			)
+			.all(...args) as Array<{type: string; n: number}>;
+
+		const idRows = this.db
+			.prepare(
+				`SELECT az.identifier_value AS value, COUNT(*) AS n
+				   FROM authorizations az
+				   JOIN orders o ON o.id = az.order_id
+				  WHERE az.status IN ('invalid','expired') AND o.status IN ('invalid','expired')${w}
+				  GROUP BY az.identifier_value ORDER BY n DESC LIMIT 10`,
+			)
+			.all(...args) as Array<{value: string; n: number}>;
+
+		const byChallengeType: Record<string, number> = {};
+		for (const r of chRows) byChallengeType[r.type] = r.n;
+
+		return {
+			totalInvalid: totalRow.n,
+			byProblemType: probRows
+				.filter(r => r.type)
+				.map(r => ({type: r.type as string, count: r.n})),
+			byChallengeType,
+			topFailingIdentifiers: idRows.map(r => ({value: r.value, count: r.n})),
+		};
+	}
+
+	issuanceSeries(opts: {since?: string; until?: string; bucket: 'day' | 'hour'}): Array<{
+		ts: string;
+		issued: number;
+		revoked: number;
+	}> {
+		const fmt = opts.bucket === 'hour' ? '%Y-%m-%d %H:00' : '%Y-%m-%d';
+		const where: string[] = [];
+		const args: any[] = [];
+		if (opts.since) { where.push('issued_at>=?'); args.push(opts.since); }
+		if (opts.until) { where.push('issued_at<?'); args.push(opts.until); }
+		const w = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+		const issued = this.db
+			.prepare(
+				`SELECT strftime('${fmt}', issued_at) AS ts, COUNT(*) AS n
+				   FROM certificates${w}
+				  GROUP BY ts ORDER BY ts ASC`,
+			)
+			.all(...args) as Array<{ts: string; n: number}>;
+		// Revoked uses revoked_at instead — separate query, then merge.
+		const where2: string[] = ['revoked=1'];
+		const args2: any[] = [];
+		if (opts.since) { where2.push('revoked_at>=?'); args2.push(opts.since); }
+		if (opts.until) { where2.push('revoked_at<?'); args2.push(opts.until); }
+		const revoked = this.db
+			.prepare(
+				`SELECT strftime('${fmt}', revoked_at) AS ts, COUNT(*) AS n
+				   FROM certificates WHERE ${where2.join(' AND ')}
+				  GROUP BY ts ORDER BY ts ASC`,
+			)
+			.all(...args2) as Array<{ts: string; n: number}>;
+		const merged = new Map<string, {ts: string; issued: number; revoked: number}>();
+		for (const r of issued) merged.set(r.ts, {ts: r.ts, issued: r.n, revoked: 0});
+		for (const r of revoked) {
+			const e = merged.get(r.ts) ?? {ts: r.ts, issued: 0, revoked: 0};
+			e.revoked = r.n;
+			merged.set(r.ts, e);
+		}
+		return Array.from(merged.values()).sort((a, b) => (a.ts < b.ts ? -1 : 1));
+	}
+
+	/* ──────────── ban: list active certs for an account ──────────── */
+
+	listActiveCertsForAccount(accountId: string): CertRow[] {
+		return this.db
+			.prepare(
+				`SELECT * FROM certificates WHERE account_id=? AND revoked=0 AND not_after > ?`,
+			)
+			.all(accountId, nowIso()) as CertRow[];
+	}
+
+	listOpenOrdersForAccount(accountId: string): OrderRow[] {
+		return this.db
+			.prepare(
+				`SELECT * FROM orders WHERE account_id=? AND status IN ('pending','ready','processing')`,
+			)
+			.all(accountId) as OrderRow[];
+	}
+
+	/* ──────────── expire-tick used by background worker ──────────── */
+
+	expireDueOrders(): number {
+		const r = this.db
+			.prepare(
+				`UPDATE orders SET status='expired'
+				 WHERE status IN ('pending','ready','processing') AND expires_at < ?`,
+			)
+			.run(nowIso());
+		return r.changes;
+	}
+
+	expireDueAuthz(): number {
+		const r = this.db
+			.prepare(
+				`UPDATE authorizations SET status='expired'
+				 WHERE status='pending' AND expires_at < ?`,
+			)
+			.run(nowIso());
+		return r.changes;
+	}
+
+	/* ──────────── server-managed DNS placements ──────────── */
+
+	insertPlacement(opts: {
+		challengeId: string;
+		recordName: string;
+		recordValue: string;
+		providerLabel: string;
+	}): DnsPlacementRow {
+		const row: DnsPlacementRow = {
+			id: ulid(),
+			challenge_id: opts.challengeId,
+			record_name: opts.recordName,
+			record_value: opts.recordValue,
+			provider_label: opts.providerLabel,
+			placed_at: nowIso(),
+			cleaned_at: null,
+		};
+		this.db
+			.prepare(
+				`INSERT INTO dns_placements(id,challenge_id,record_name,record_value,provider_label,placed_at,cleaned_at)
+				 VALUES(@id,@challenge_id,@record_name,@record_value,@provider_label,@placed_at,@cleaned_at)`,
+			)
+			.run(row);
+		return row;
+	}
+
+	markPlacementCleaned(id: string): void {
+		this.db.prepare('UPDATE dns_placements SET cleaned_at=? WHERE id=?').run(nowIso(), id);
+	}
+
+	listOpenPlacements(): DnsPlacementRow[] {
+		return this.db
+			.prepare('SELECT * FROM dns_placements WHERE cleaned_at IS NULL ORDER BY placed_at ASC')
+			.all() as DnsPlacementRow[];
+	}
+
+	listPlacementsForChallenge(challengeId: string): DnsPlacementRow[] {
+		return this.db
+			.prepare(
+				'SELECT * FROM dns_placements WHERE challenge_id=? AND cleaned_at IS NULL',
+			)
+			.all(challengeId) as DnsPlacementRow[];
+	}
+
+	/* ──────────── reissue jobs ──────────── */
+
+	createReissueJob(opts: {
+		scope: string;
+		params: object;
+		ratePerSec: number;
+		certIds: string[];
+		actorFp: string | null;
+	}): ReissueJobRow {
+		const id = ulid();
+		const job: ReissueJobRow = {
+			id,
+			scope: opts.scope,
+			params_json: JSON.stringify(opts.params),
+			status: 'running',
+			total: opts.certIds.length,
+			done: 0,
+			failed: 0,
+			rate_per_sec: opts.ratePerSec,
+			started_at: nowIso(),
+			finished_at: null,
+			actor_fp: opts.actorFp,
+		};
+		const insertJob = this.db.prepare(
+			`INSERT INTO reissue_jobs(id,scope,params_json,status,total,done,failed,rate_per_sec,started_at,finished_at,actor_fp)
+			 VALUES(@id,@scope,@params_json,@status,@total,@done,@failed,@rate_per_sec,@started_at,@finished_at,@actor_fp)`,
+		);
+		const insertItem = this.db.prepare(
+			`INSERT INTO reissue_job_items(id,job_id,cert_id,status,error,finished_at)
+			 VALUES(?,?,?,?,NULL,NULL)`,
+		);
+		this.db.transaction(() => {
+			insertJob.run(job);
+			for (const cid of opts.certIds) insertItem.run(ulid(), id, cid, 'pending');
+		})();
+		return job;
+	}
+
+	getReissueJob(id: string): ReissueJobRow | undefined {
+		return this.db.prepare('SELECT * FROM reissue_jobs WHERE id=?').get(id) as
+			| ReissueJobRow
+			| undefined;
+	}
+
+	listReissueJobs(opts?: {limit?: number; status?: string}): ReissueJobRow[] {
+		const lim = Math.min(opts?.limit ?? 50, 200);
+		if (opts?.status) {
+			return this.db
+				.prepare('SELECT * FROM reissue_jobs WHERE status=? ORDER BY started_at DESC LIMIT ?')
+				.all(opts.status, lim) as ReissueJobRow[];
+		}
+		return this.db
+			.prepare('SELECT * FROM reissue_jobs ORDER BY started_at DESC LIMIT ?')
+			.all(lim) as ReissueJobRow[];
+	}
+
+	listReissueJobItems(jobId: string, status?: string): ReissueJobItemRow[] {
+		if (status) {
+			return this.db
+				.prepare('SELECT * FROM reissue_job_items WHERE job_id=? AND status=? ORDER BY id ASC')
+				.all(jobId, status) as ReissueJobItemRow[];
+		}
+		return this.db
+			.prepare('SELECT * FROM reissue_job_items WHERE job_id=? ORDER BY id ASC')
+			.all(jobId) as ReissueJobItemRow[];
+	}
+
+	updateReissueItem(id: string, status: 'done' | 'failed', error?: string): void {
+		this.db
+			.prepare('UPDATE reissue_job_items SET status=?, error=?, finished_at=? WHERE id=?')
+			.run(status, error ?? null, nowIso(), id);
+	}
+
+	incReissueJobCounter(jobId: string, field: 'done' | 'failed'): void {
+		this.db.prepare(`UPDATE reissue_jobs SET ${field}=${field}+1 WHERE id=?`).run(jobId);
+	}
+
+	finishReissueJob(jobId: string, status: 'done' | 'failed' | 'cancelled'): void {
+		this.db
+			.prepare('UPDATE reissue_jobs SET status=?, finished_at=? WHERE id=?')
+			.run(status, nowIso(), jobId);
+	}
+
+	/** Replace the PEM/serial/notBefore/notAfter of an existing cert row in place.
+	 * Used after a successful resign — same cert row id, new bytes. */
+	replaceCertPem(id: string, opts: {pem: string; serialHex: string; notBefore: string; notAfter: string}): void {
+		this.db
+			.prepare(
+				`UPDATE certificates SET pem=?, serial_hex=?, not_before=?, not_after=? WHERE id=?`,
+			)
+			.run(opts.pem, opts.serialHex, opts.notBefore, opts.notAfter, id);
+	}
+
+	/** All non-revoked, non-expired certs — the default scope for reissue=all-active. */
+	listActiveCerts(): CertRow[] {
+		return this.db
+			.prepare(
+				`SELECT * FROM certificates WHERE revoked=0 AND not_after > ? ORDER BY issued_at ASC`,
+			)
+			.all(nowIso()) as CertRow[];
 	}
 }
+
+export type ReissueJobRow = {
+	id: string;
+	scope: string;
+	params_json: string | null;
+	status: 'running' | 'done' | 'failed' | 'cancelled';
+	total: number;
+	done: number;
+	failed: number;
+	rate_per_sec: number;
+	started_at: string;
+	finished_at: string | null;
+	actor_fp: string | null;
+};
+
+/** Parse the denormalised identifiers JSON column safely. */
+export function parseIdentifiers(raw: string | null | undefined): string[] {
+	if (!raw) return [];
+	try {
+		const v = JSON.parse(raw);
+		return Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [];
+	} catch {
+		return [];
+	}
+}
+
+export type ReissueJobItemRow = {
+	id: string;
+	job_id: string;
+	cert_id: string;
+	status: 'pending' | 'done' | 'failed';
+	error: string | null;
+	finished_at: string | null;
+};

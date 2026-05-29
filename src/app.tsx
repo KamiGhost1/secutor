@@ -32,6 +32,19 @@ import {VerifySignatureScreen} from './screens/VerifySignatureScreen.js';
 import {SshKeysScreen} from './screens/SshKeysScreen.js';
 import {CreateSshKeyScreen} from './screens/CreateSshKeyScreen.js';
 import {SshKeyDetailsScreen} from './screens/SshKeyDetailsScreen.js';
+import {TransferEntityScreen} from './screens/TransferEntityScreen.js';
+import {ImportBundleScreen} from './screens/ImportBundleScreen.js';
+import {HubsScreen} from './screens/HubsScreen.js';
+import {AddHubScreen} from './screens/AddHubScreen.js';
+import {RemoteHubScreen} from './screens/RemoteHubScreen.js';
+import {RemoteCaVerifyScreen} from './screens/RemoteCaVerifyScreen.js';
+import {RemoteCertsScreen} from './screens/RemoteCertsScreen.js';
+import {RemoteCertDetailsScreen} from './screens/RemoteCertDetailsScreen.js';
+import {RemoteAccountsScreen} from './screens/RemoteAccountsScreen.js';
+import {RemoteStatsScreen} from './screens/RemoteStatsScreen.js';
+import {RemoteAuditScreen} from './screens/RemoteAuditScreen.js';
+import {RemoteCaRotateScreen} from './screens/RemoteCaRotateScreen.js';
+import {JobProgressScreen} from './screens/JobProgressScreen.js';
 
 function Router() {
 	const {current} = useApp();
@@ -65,6 +78,19 @@ function Router() {
 		case 'ssh-keys':         return <SshKeysScreen />;
 		case 'create-ssh-key':   return <CreateSshKeyScreen />;
 		case 'ssh-key-details':  return <SshKeyDetailsScreen id={screen.id} />;
+		case 'transfer-entity':  return <TransferEntityScreen transferKind={screen.transferKind} id={screen.id} />;
+		case 'import-bundle':    return <ImportBundleScreen />;
+		case 'hubs':             return <HubsScreen />;
+		case 'add-hub':          return <AddHubScreen />;
+		case 'remote-hub':       return <RemoteHubScreen hubId={screen.hubId} />;
+		case 'remote-ca-verify': return <RemoteCaVerifyScreen hubId={screen.hubId} />;
+		case 'remote-certs':     return <RemoteCertsScreen hubId={screen.hubId} />;
+		case 'remote-cert-details': return <RemoteCertDetailsScreen hubId={screen.hubId} certId={screen.certId} />;
+		case 'remote-accounts':  return <RemoteAccountsScreen hubId={screen.hubId} />;
+		case 'remote-stats':     return <RemoteStatsScreen hubId={screen.hubId} />;
+		case 'remote-audit':     return <RemoteAuditScreen hubId={screen.hubId} />;
+		case 'remote-ca-rotate': return <RemoteCaRotateScreen hubId={screen.hubId} />;
+		case 'job-progress':     return <JobProgressScreen hubId={screen.hubId} jobId={screen.jobId} />;
 		case 'settings':         return <SettingsScreen />;
 		default:
 			return (

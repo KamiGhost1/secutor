@@ -57,6 +57,13 @@ export function FileExplorer({
 	startDir?: string;
 	defaultFileName?: string;
 	onSelect: (fullPath: string) => void;
+	/**
+	 * **Owns Esc on the screen it lives on.** Don't also add a screen-level
+	 * `useInput((_, k) => { if (k.escape) pop() })` while this widget is
+	 * mounted — Ink's useInput is global, both handlers fire on one Esc,
+	 * and the route stack pops twice. See the same note next to
+	 * `Menu.onCancel` / `Confirm.onCancel`.
+	 */
 	onCancel: () => void;
 	title?: string;
 	pageSize?: number;

@@ -21,6 +21,8 @@ Interactive terminal UI for managing a private PKI plus modern crypto tooling: r
 - **PKCS#12 profiles** — bundle leaf + key + chain into a password-protected `.p12` for browsers, mobile, or service deployment. Import and decrypt existing `.p12` files too.
 - **Encrypted contexts** — a *context* is one independent PKI. Each context is a single SQLite file, optionally encrypted at rest with a password (AES-GCM). Switch between contexts inside the app or import/export them as portable files.
 - **Import existing material** — drop in PEM (`.crt`/`.pem`/`.cer`/combined) or PKCS#12 (`.p12`/`.pfx`); the importer detects and stores intermediates/roots as CAs and links the chain.
+- **Key bundles (`.skb`)** — move certs, SSH keys, P12 profiles or whole CA subtrees between contexts (or machines) without losing metadata. Encrypted PKCS#8 keys travel as-is — secutor never has to know their passphrase. Bundles can be wrapped in a scrypt + AES-256-GCM envelope for transport over untrusted channels. Hotkey `T` on any cert / SSH-key / profile.
+- **Hubs (remote ACME admin)** — connect over mTLS to a running [`secutor-acme`](acme-server/) hub and drive it from the same TUI: browse certificates, revoke, ban accounts (with cascading revocation), inspect audit + stats dashboards, verify the hub's CA key matches what you expect, rotate the signing intermediate (stage → promote → rollback), kick off a background "re-sign all active leaves" job. Server-managed DNS-01 — the hub publishes TXT records on the client's behalf via configured providers.
 - **i18n** — built-in English and Russian (toggle in Settings).
 - **Mouse + keyboard** — wheel scroll, click selection, function keys, full keyboard navigation.
 
@@ -57,6 +59,12 @@ Layout:
 ├── meta.json                  # context registry
 ├── locale.json                # UI language
 ├── settings.json              # UI preferences (e.g. show web-server configs in export)
+├── hubs.json                  # registered ACME hubs (id, baseUrl, pinned server fp, client-auth handle)
+├── hubkeys/                   # standalone client identities used to log into hubs
+│   └── <entry>/
+│       ├── cert.pem
+│       ├── key.pem(.enc)      # plain PKCS#8 or AES-256-GCM wrapped
+│       └── meta.json
 └── contexts/
     └── <name>/
         ├── context.json       # context metadata
@@ -65,6 +73,8 @@ Layout:
 ```
 
 Encrypted contexts are decrypted to a temp file (mode 0600) for the duration of the session and re-encrypted on every write.
+
+`hubs.json` and `hubkeys/` are populated only after you add at least one hub via the **Hubs** main-menu entry (see [Hubs](#hubs-remote-acme-admin) below).
 
 ## Quick tour
 
@@ -227,6 +237,98 @@ and ship just that `.crt` alongside your signature. The receiver verifies
 with `secutor verify file --signer-file signer.crt` and never needs your
 context.
 
+### `secutor keys export | import | transfer`
+
+Move secutor's own material (certs, SSH keys, P12 profiles, whole CA
+subtrees) between contexts as a single `.skb` (secutor key-bundle) file.
+The bundle format is documented at the top of
+[`src/transfer/keyBundle.ts`](src/transfer/keyBundle.ts); the short version
+is *magic + JSON manifest + payload*, optionally wrapped in a scrypt +
+AES-256-GCM envelope.
+
+Encrypted PKCS#8 private keys travel as they are. secutor never has to know
+the per-key passphrase to ship them.
+
+```bash
+# Export a cert (with its issuer chain) to a plain .skb file.
+secutor keys export mysvc --context prod --include-parents \
+    --out /tmp/mysvc.skb
+
+# Export the entire subtree rooted at a CA, wrapped in a password envelope.
+secutor keys export rootca --context prod --subtree --encrypt \
+    --bundle-password "$BUNDLE_PW" --out /tmp/root-subtree.skb
+
+# Same operation but kind=ssh / kind=profile.
+secutor keys export deploy --context prod --kind ssh --out deploy.skb
+
+# Import into another context. Encrypted bundles will prompt or accept
+# --bundle-password / --bundle-password-stdin.
+secutor keys import /tmp/mysvc.skb --context ops
+
+# One-shot context → context transfer (no intermediate file).
+secutor keys transfer mysvc --from prod --to ops --include-parents
+```
+
+Conflicts on import are surfaced (not hidden): a duplicate fingerprint is
+reported as `skipped`, a name collision is suffix-resolved with a `note`,
+and an existing row whose `key_pem` was empty gets filled in (or
+overwritten with `--overwrite-key`). Imports run inside a SQLite
+transaction — any failure rolls back the whole bundle.
+
+Full flag list: `secutor keys --help`.
+
+## Hubs (remote ACME admin)
+
+When you've deployed [`secutor-acme`](acme-server/) somewhere with its
+admin API enabled (mTLS-only, separate listener — see
+[acme-server/docs/admin-api.md](acme-server/docs/admin-api.md)), the same
+TUI can drive it remotely. From the main menu pick **🌐 Hubs**.
+
+**Add a hub** (`A` on the Hubs screen):
+
+1. Type a display name + base URL (`https://acme.lan.vpn:8444`).
+2. Pick the client-identity source:
+   - **Cert from this context** — picks one of your `client`-type certs.
+   - **Cert/key files on disk** — point at `cert.pem` and `key.pem` paths.
+   - **Cert from hub keystore** — pick an entry from `~/.secutor/hubkeys/`
+     (a standalone, context-free keystore for hub logins).
+3. TUI probes the server, shows its SHA-256 fingerprint, asks you to pin it
+   (TOFU). After that, every connection verifies the cert fingerprint
+   regardless of OS trust stores.
+
+The mTLS client cert is **not** required to share a CA with the hub's
+signing CA — the hub's admin trust policy is a separate
+fingerprint-allow-list and/or independent admin-CA set
+(see [acme-server/docs/admin-api.md §Trust policy](acme-server/docs/admin-api.md)).
+
+**In a hub session** (after `Connect`) you get:
+
+- 📜 **Browse certificates** — list with `V` to toggle "only non-revoked",
+  `D` to revoke (operator role).
+- 👥 **Browse accounts** — list with `B` to ban / unban an issuer account
+  (owner role). Ban cascades: every valid cert that account holds is
+  revoked with `reason=privilegeWithdrawn`, every open order is cancelled,
+  all wrapped in one DB transaction. Unban does NOT restore revoked certs.
+- 📊 **Stats dashboard** — total/valid/invalid/expired orders, success
+  rate, color stacked bar, top problem types, top failing identifiers,
+  recent buckets sparkline.
+- 📋 **Audit log** — filterable view (all / admin actions / revokes /
+  cascade revokes / issuance / admin issuance / ca.verify).
+- 🔑 **Verify CA private key** — proof-of-possession. TUI generates a
+  nonce, hub signs `SHA-256("secutor-ca-verify-v1" || nonce)` with the CA
+  private key, TUI verifies locally against the expected CA public key
+  (sourced from a context cert or a .pem file). Detects key swaps / wrong
+  intermediate / failed-to-promote staging.
+- 🔄 **Rotate CA / re-sign leaves** — stage a new CA candidate (from a
+  context CA with a stored key, or from a `.skb` bundle), promote it
+  atomically, rollback within the configured window. Kick a background
+  reissue job ("re-sign all active leaves") and watch its progress
+  (`C` cancels).
+
+See [acme-server/docs/ca-rotation.md](acme-server/docs/ca-rotation.md) and
+[acme-server/docs/server-managed-dns.md](acme-server/docs/server-managed-dns.md)
+for the server-side flows these screens drive.
+
 ## Keyboard
 
 | Key | Action |
@@ -239,8 +341,12 @@ context.
 | `P` | Make P12 profile (on cert details) |
 | `V` | Verify (on cert details) |
 | `M` | Manage issuer — attach to a CA or re-sign with a different one (on cert details) |
+| `T` | Transfer entity to `.skb` file or another context (on cert / SSH key / profile) |
 | `R` | Revoke / Unrevoke (on cert details, non-root) |
 | `D` | Delete (on lists) |
+| `B` | Ban / Unban account (on remote accounts list) |
+| `F` | Cycle filter (on remote audit log) |
+| `C` | Cancel job (on job progress) |
 | `F10` | Quit |
 
 ## Windows install troubleshooting
@@ -464,8 +570,8 @@ The bundle layout is a 15-byte magic (`SECUTORSIG\x01`) + uint32-BE manifest len
 ```
 $ npm test
 …
-# tests 82
-# pass  82
+# tests 160
+# pass  160
 # fail  0
 ```
 

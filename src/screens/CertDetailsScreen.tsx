@@ -9,6 +9,7 @@ import {certRepo} from '../storage/repos.js';
 import {parseCertPem} from '../certs/parser.js';
 import {verifyCertById} from '../certs/verify.js';
 import {expiryStatusOfRow, expiryColor, expiryIcon} from '../certs/expiry.js';
+import {copyToClipboard} from '../utils/clipboard.js';
 
 export function CertDetailsScreen({id}: {id: number}) {
 	const {pop, push, showToast} = useApp();
@@ -49,6 +50,15 @@ export function CertDetailsScreen({id}: {id: number}) {
 		else if (input === 'p' || input === 'P') push({kind: 'create-profile', certId: id});
 		else if (input === 'v' || input === 'V') push({kind: 'verify'});
 		else if (input === 'm' || input === 'M') push({kind: 'reassign-issuer', id});
+		else if (input === 't' || input === 'T') push({kind: 'transfer-entity', transferKind: 'cert', id});
+		else if (input === 'c' || input === 'C') {
+			const r = copyToClipboard(row.fingerprint);
+			if (r.ok) {
+				showToast({kind: 'success', message: t('cert.fpCopied', {via: r.via})});
+			} else {
+				showToast({kind: 'error', message: t('cert.fpCopyFailed', {err: r.error})});
+			}
+		}
 		else if ((input === 'n' || input === 'N') && canRenew) push({kind: 'renew-cert', id});
 		else if ((input === 'r' || input === 'R') && canRevoke) {
 			if (isRevoked) {
@@ -142,6 +152,8 @@ export function CertDetailsScreen({id}: {id: number}) {
 					{key: 'P', label: t('fbar.makeP12')},
 					{key: 'V', label: t('fbar.verify')},
 					{key: 'M', label: t('fbar.manageIssuer')},
+					{key: 'T', label: t('fbar.transfer')},
+					{key: 'C', label: t('fbar.copyFp')},
 					...(canRenew ? [{key: 'N', label: t('fbar.renew')}] : []),
 					...(canRevoke
 						? [{key: 'R', label: isRevoked ? t('fbar.unrevoke') : t('fbar.revoke')}]

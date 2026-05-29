@@ -27,6 +27,21 @@ export function Menu<V>({
 }: {
 	items: MenuItem<V>[];
 	onSelect: (v: V, idx: number) => void;
+	/**
+	 * Called when the user presses Esc on this Menu. **Owns Esc on the screen
+	 * it lives on.**
+	 *
+	 * GOTCHA — do NOT add a sibling `useInput((_, k) => { if (k.escape) pop() })`
+	 * on the same screen. Ink's `useInput` is global (not scoped by focus),
+	 * so both handlers fire and the route stack pops twice — the user lands
+	 * one screen further back than they expected. The same applies to
+	 * sibling `<FileExplorer onCancel={pop} />` and `<Confirm onCancel={pop} />`.
+	 *
+	 * Pattern: let the child widget own Esc (`onCancel={pop}` here), and only
+	 * add a screen-level Esc fallback for states where no such widget is
+	 * mounted (e.g. a "loading…" placeholder or a terminal "done" view) —
+	 * gated on that state so it doesn't double-fire when the widget appears.
+	 */
 	onCancel?: () => void;
 	onAction?: (input: string, key: Key, item: MenuItem<V> | null) => void;
 	title?: string;

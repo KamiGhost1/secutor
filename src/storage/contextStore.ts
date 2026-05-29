@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import {
-	CONTEXTS_DIR,
-	META_FILE,
+	contextsDir,
+	metaFile,
 	contextDir,
 	contextEncryptedFile,
 	contextDbFile,
@@ -39,16 +39,16 @@ function writeJson(p: string, v: unknown): void {
 
 export function readRootMeta(): RootMeta {
 	ensureRoot();
-	return readJson<RootMeta>(META_FILE, {currentContext: null});
+	return readJson<RootMeta>(metaFile(), {currentContext: null});
 }
 export function writeRootMeta(m: RootMeta): void {
-	writeJson(META_FILE, m);
+	writeJson(metaFile(), m);
 }
 
 export function listContexts(): ContextMeta[] {
 	ensureRoot();
 	const out: ContextMeta[] = [];
-	for (const entry of fs.readdirSync(CONTEXTS_DIR)) {
+	for (const entry of fs.readdirSync(contextsDir())) {
 		const file = contextMetaFile(entry);
 		if (fs.existsSync(file)) {
 			const m = readJson<ContextMeta | null>(file, null);

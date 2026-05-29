@@ -72,3 +72,126 @@ resolvers:
 
 - Где жить отзывам: расширить существующий `audit.ts` или вести отдельный журнал в ACME-стейте? Склоняюсь к отдельному, чтобы CA-стор оставался read-only.
 - Нужен ли встроенный acme-dns или достаточно RFC 2136 + плагины провайдеров? Решим после первой интеграции.
+
+## Дополнительные подсистемы (v0.2+)
+
+Этот раздел описывает, что добавилось поверх базовой ACME-картины выше.
+Полные API-reference'ы — в отдельных доках; здесь только архитектурный
+контекст и как куски соединяются.
+
+### Admin API (mTLS)
+
+Параллельный fastify-инстанс на отдельном порту (`config.admin.listen`).
+На handshake принимает любой клиентский сертификат
+(`requestCert:true, rejectUnauthorized:false`), а фактическую авторизацию
+делает middleware:
+
+1. Считает SHA-256(peer DER) и ищет в `config.admin.trust.fingerprints[]`.
+2. Если не нашлось — пытается верифицировать цепочку peer'а против любого
+   `config.admin.trust.cas[].caFile` и применяет `subjectMatch` фильтр.
+
+Совпадение даёт роль `viewer` / `operator` / `owner` (выигрывает самая
+высокая роль из всех сматчившихся правил). RBAC проверяется per-route.
+
+Подсистемы внутри admin namespace:
+- **Inventory + revoke** (operator+) — list/filter сертификаты, отзыв.
+- **Accounts + ban** (owner для bann'а) — каскадный revoke всех валидных
+  сертификатов аккаунта + cancel открытых ордеров в одной транзакции.
+  Аудит-лог фиксирует ban-event id, который размечает каждую каскадную
+  запись.
+- **Stats** — агрегаты по статусам ордеров, success rate, top problem
+  types (parsed `error_json.type`), top failing identifiers, временные
+  корзины. Реализовано стандартными SQL-агрегатами + `json_extract`.
+- **Audit log** — read с фильтрами `action`/`actor_id`/`target`/`since`.
+- **Admin-issue** (operator+) — выпуск leaf в обход challenge'ей. Принимает
+  CSR (сервер только подписывает) или самостоятельно генерит keypair и
+  возвращает оба PEMa. Привязывается к синтетическому admin-аккаунту,
+  идентифицируемому fingerprint'ом клиента — admin-issued сертификаты
+  обособлены в листинге.
+
+Подробнее: [admin-api.md](admin-api.md).
+
+### CA bridge / rotation
+
+Обёртка `CaStore` оборачивает canonical `CaMaterial` объект и держит
+`staged` кандидата + `previous` для отката. Все читатели (routes, signer,
+admin) держат живую ссылку на один и тот же `ca`-объект, который
+`promote()` мутирует in-place через `Object.assign`. Это делает swap
+наблюдаемым следующей же операцией подписи — без сложного atomic-handle
+protocol'а.
+
+Эндпоинты:
+
+- `POST /admin/v1/ca/stage` (owner) — валидирует key↔cert (sign+verify
+  nonce), chain до того же root, наличие ≥30 дней valid, отличность от
+  активного. Хранит staged-кандидата в RAM.
+- `GET /admin/v1/ca/staged` — read.
+- `DELETE /admin/v1/ca/staged` (owner) — сбросить кандидата.
+- `POST /admin/v1/ca/promote` (owner) — atomic swap; `previous`
+  сохраняется на `rollbackWindowHours` (24 дефолт).
+- `POST /admin/v1/ca/rollback` (owner) — восстановить `previous`.
+
+Staged-материал живёт только в памяти. После рестарта оператор обязан
+заново вызвать stage — это сознательный trade-off против риска хранения
+полу-mutate'нных ключей на диске.
+
+После promote `ReissueWorker` может перевыпустить все active leaf'ы под
+новый ключ (см. ниже).
+
+Подробнее: [ca-rotation.md](ca-rotation.md).
+
+### Reissue worker
+
+Background worker, который перевыпускает leaf-сертификаты под текущий
+активный CA-ключ. Берёт SPKI/SANs/CN/validity из старого cert'а и
+скармливает их в `issueLeaf` — клиентский приватник остаётся валидным
+(public key не меняется), serial и подпись новые. В таблице `certificates`
+обновляется `pem` + `serial_hex` той же row id.
+
+Endpoints в admin namespace:
+
+- `POST /admin/v1/jobs/reissue` (owner) — body `{scope, ratePerSec, ...}`.
+  Scopes: `all-active`, `by-account`, `by-identifier-pattern`. Возвращает
+  job row с total/done/failed.
+- `GET /admin/v1/jobs/:id` — статус.
+- `POST /admin/v1/jobs/:id/cancel` (owner).
+
+Rate-limit между items — `1000 / ratePerSec` ms. Job state живёт в
+`reissue_jobs` + `reissue_job_items`; переживает рестарт (worker
+доберёт оставшиеся pending items на следующем тике).
+
+### Server-managed DNS
+
+Расширение `secutor.dnsPlacement = 'server-managed'` в `newOrder` говорит
+хабу сам публиковать TXT-запись для DNS-01 challenge'а. На сервере
+работает `DnsProviderRegistry` с zone-match dispatcher'ом
+(longest-zone-wins).
+
+Поток для server-managed order:
+1. `newOrder` проверяет, что есть provider для каждого identifier'а —
+   иначе сразу `rejectedIdentifier`.
+2. Challenge сразу ставится `processing` (без ожидания клиентского
+   `POST /chall/:id`).
+3. Worker при первом тике делает `provider.place({name, value})` и пишет
+   в таблицу `dns_placements` — для cleanup-on-restart.
+4. Validator идёт обычным путём; на terminal outcome (`valid`/`invalid`)
+   делается `cleanup` и placement помечается cleaned.
+
+Поддерживаемые провайдеры: `rfc2136` (BIND nsupdate), `script` (внешний
+shell hook), `memory` (для тестов). Новые добавляются в
+`src/dns/providers.ts` + регистрируются в `dnsProviders.ts`.
+
+При старте сервера `Worker.sweepStalePlacementsOnStartup()` собирает все
+открытые placement'ы и cleanup'ит их — TXT-зона не накапливает мусор
+после крэшей.
+
+Подробнее: [server-managed-dns.md](server-managed-dns.md).
+
+### ARI hint
+
+`GET /renewalInfo/:id` — публичный, без mTLS. Возвращает
+`{suggestedWindow: {start, end}}` согласно draft-ietf-acme-ari.
+Heuristic: окно начинается в последней трети validity, заканчивается за
+6 часов до not_after. После reissue, когда сертификат уже несёт новую
+подпись, клиент при следующем GET увидит, что `start` уже в прошлом —
+и пойдёт делать renew.

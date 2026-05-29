@@ -7,6 +7,7 @@ import {closeContext} from './storage/db.js';
 import {createInputProxy, enableMouse, disableMouse} from './input/inputProxy.js';
 import {VERSION} from './version.js';
 import {isCliSubcommand, runCli, SIGN_HELP, VERIFY_HELP} from './cli/commands.js';
+import {KEYS_HELP} from './cli/keysCommands.js';
 
 ensureRoot();
 
@@ -22,12 +23,16 @@ if (args[0] === '--help' || args[0] === '-h' || (args.length === 0 ? false : !is
 			`  secutor                       run interactive UI\n` +
 			`  secutor sign <file> [opts]    sign a file (see 'secutor sign --help')\n` +
 			`  secutor verify <file> [opts]  verify a signed file (see 'secutor verify --help')\n` +
+			`  secutor keys ... [opts]       export / import / transfer keys between contexts\n` +
+			`                                (see 'secutor keys --help')\n` +
 			`  secutor --help                show this help\n` +
 			`  secutor --version             print the version and exit\n\n` +
 			`Storage path: ~/.secutor (override with SECUTOR_HOME)\n\n` +
 			SIGN_HELP +
 			`\n\n` +
 			VERIFY_HELP +
+			`\n\n` +
+			KEYS_HELP +
 			`\n`,
 	);
 	process.exit(0);

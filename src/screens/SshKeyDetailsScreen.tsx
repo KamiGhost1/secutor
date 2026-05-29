@@ -17,7 +17,7 @@ import {decryptPrivateKey, isEncryptedKey} from '../certs/keys.js';
 type Mode = 'view' | 'export-ssh' | 'export-folder' | 'busy';
 
 export function SshKeyDetailsScreen({id}: {id: number}) {
-	const {pop, showToast} = useApp();
+	const {pop, push, showToast} = useApp();
 	const t = useT();
 	const row = useMemo(() => sshKeyRepo.findById(id), [id]);
 	const [mode, setMode] = useState<Mode>('view');
@@ -64,6 +64,9 @@ export function SshKeyDetailsScreen({id}: {id: number}) {
 		if (mode === 'view') {
 			if (input === 'e' || input === 'E') setMode('export-ssh');
 			else if (input === 'x' || input === 'X') setMode('export-folder');
+			else if (input === 't' || input === 'T') {
+				if (row) push({kind: 'transfer-entity', transferKind: 'ssh', id: row.id});
+			}
 		}
 		if (mode === 'export-ssh' && key.return) {
 			doExportSsh();
@@ -181,6 +184,7 @@ export function SshKeyDetailsScreen({id}: {id: number}) {
 				keys={[
 					{key: 'E', label: t('ssh.fbarExportSsh')},
 					{key: 'X', label: t('ssh.fbarExportFile')},
+					{key: 'T', label: t('fbar.transfer')},
 					{key: 'Esc', label: t('fbar.back')},
 				]}
 			/>

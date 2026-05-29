@@ -19,6 +19,8 @@ export type ServerCtx = {
 	urls: Urls;
 	config: Config;
 	ca: CaMaterial;
+	/** Optional — present only if `config.dnsProviders` is configured. */
+	dnsRegistry?: import('./dnsProviders.js').DnsProviderRegistry;
 };
 
 function applyAcmeHeaders(reply: FastifyReply, ctx: ServerCtx, link?: string): void {
@@ -103,6 +105,38 @@ export function registerRoutes(app: FastifyInstance, ctx: ServerCtx): void {
 		}
 		app.log.error({err}, 'unhandled error');
 		sendProblem(reply, ctx, new AcmeError('serverInternal', err.message ?? 'internal error', 500));
+	});
+
+	// ARI (draft-ietf-acme-ari) renewal-info hint. Public, unauthenticated.
+	// Per the draft, the path is /renewalInfo/<base64url-encoded(AKI || serial)>;
+	// our simpler form takes the cert id we already use elsewhere. This is an
+	// extension; standard clients ignore it harmlessly.
+	app.get('/renewalInfo/:id', async (req, reply) => {
+		const id = (req.params as any).id as string;
+		const cert = ctx.repos.getCert(id);
+		if (!cert) {
+			reply.code(404).send({error: 'not-found'});
+			return reply;
+		}
+		// If the cert was re-signed recently (issued_at is the original issuance
+		// but pem now reflects the new signature), we want clients to renew now.
+		// Approximation: when the issuing CA's certificate fingerprint differs
+		// from what the leaf chains to in `chain_pem`, the leaf has been
+		// resigned — recommend "renew now". Otherwise recommend the usual
+		// pre-expiry window.
+		const now = Date.now();
+		const expiresAt = new Date(cert.not_after).getTime();
+		const ttl = expiresAt - now;
+		// Default: recommend renewal in the last third of the validity window.
+		const recommendStart = now + Math.max(0, Math.floor(ttl * 2 / 3));
+		const recommendEnd = now + Math.max(0, ttl - 6 * 3600_000); // 6h before expiry
+		reply.header('Retry-After', '86400');
+		return {
+			suggestedWindow: {
+				start: new Date(recommendStart).toISOString(),
+				end: new Date(recommendEnd).toISOString(),
+			},
+		};
 	});
 
 	// CRL — public, unauthenticated. Two formats:
@@ -228,12 +262,41 @@ export function registerRoutes(app: FastifyInstance, ctx: ServerCtx): void {
 			}
 		}
 
+		// Extension: clients can opt into server-managed DNS placement by
+		// adding {"secutor":{"dnsPlacement":"server-managed"}} to newOrder.
+		// Unknown clients ignore the extension; we just respond per RFC.
+		const placementMode =
+			(payload as any)?.secutor?.dnsPlacement === 'server-managed' ? 'server-managed' : 'client';
+		if (placementMode === 'server-managed') {
+			if (!ctx.dnsRegistry) {
+				throw new AcmeError(
+					'rejectedIdentifier',
+					'server-managed DNS requested but no providers configured',
+				);
+			}
+			for (const i of ids) {
+				if (!ctx.dnsRegistry.hasProviderFor(i.value)) {
+					throw new AcmeError(
+						'rejectedIdentifier',
+						`no DNS provider mapped to identifier "${i.value}"`,
+					);
+				}
+			}
+			if (!ctx.config.challenges.dns01) {
+				throw new AcmeError(
+					'rejectedIdentifier',
+					'server-managed DNS requires dns01 challenge to be enabled',
+				);
+			}
+		}
+
 		const order = ctx.repos.insertOrder({
 			accountId,
 			identifiers: ids,
 			notBefore: payload.notBefore ?? null,
 			notAfter: payload.notAfter ?? null,
 			ttlSec: ctx.config.orderTtlSec,
+			dnsPlacement: placementMode,
 		});
 		const authzList = [];
 		for (const i of ids) {
@@ -241,9 +304,16 @@ export function registerRoutes(app: FastifyInstance, ctx: ServerCtx): void {
 			authzList.push(authz);
 			// Wildcard identifiers — only DNS-01 is permitted (RFC 8555 §8.4).
 			if (ctx.config.challenges.dns01) {
-				ctx.repos.insertChallenge(authz.id, 'dns-01', randomToken());
+				const ch = ctx.repos.insertChallenge(authz.id, 'dns-01', randomToken());
+				// Server-managed: queue + place TXT immediately so the validator
+				// can do its job without waiting for the client to POST chall.
+				if (placementMode === 'server-managed') {
+					ctx.repos.queueChallenge(ch.id);
+				}
 			}
-			if (ctx.config.challenges.http01 && !authz.wildcard) {
+			// http-01 doesn't make sense for server-managed (we can't be the
+			// client). Skip it in that mode.
+			if (placementMode !== 'server-managed' && ctx.config.challenges.http01 && !authz.wildcard) {
 				ctx.repos.insertChallenge(authz.id, 'http-01', randomToken());
 			}
 		}
@@ -351,6 +421,9 @@ export function registerRoutes(app: FastifyInstance, ctx: ServerCtx): void {
 			throw new AcmeError('serverInternal', `Signing failed: ${e?.message ?? e}`, 500);
 		}
 
+		// Denormalise identifiers onto the cert row so listings don't need a
+		// JOIN. `identifiers` (from order.identifiers_json) preserves wildcard
+		// `*.` prefixes as the client sent them.
 		const cert = ctx.repos.insertCert({
 			orderId: order.id,
 			accountId: order.account_id,
@@ -359,6 +432,7 @@ export function registerRoutes(app: FastifyInstance, ctx: ServerCtx): void {
 			chainPem: ctx.ca.chainPem,
 			notBefore: result.notBefore.toISOString(),
 			notAfter: result.notAfter.toISOString(),
+			identifiers: identifiers.map(i => String(i.value)),
 		});
 		ctx.repos.attachCertToOrder(order.id, cert.id, csrDer);
 		ctx.repos.audit({

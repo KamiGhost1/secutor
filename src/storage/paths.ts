@@ -2,19 +2,33 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 
-export const ROOT_DIR =
-	process.env.SECUTOR_HOME || path.join(os.homedir(), '.secutor');
+// Resolve SECUTOR_HOME lazily so tests can override `process.env.SECUTOR_HOME`
+// before the first call without having to re-import storage modules. In
+// production this evaluates exactly once because the env var doesn't change.
+export function rootDir(): string {
+	return process.env.SECUTOR_HOME || path.join(os.homedir(), '.secutor');
+}
 
-export const CONTEXTS_DIR = path.join(ROOT_DIR, 'contexts');
-export const META_FILE = path.join(ROOT_DIR, 'meta.json');
+export function contextsDir(): string {
+	return path.join(rootDir(), 'contexts');
+}
+
+export function metaFile(): string {
+	return path.join(rootDir(), 'meta.json');
+}
+
+// NOTE: the old `ROOT_DIR`/`CONTEXTS_DIR`/`META_FILE` constants were removed
+// in favour of the rootDir()/contextsDir()/metaFile() functions above. Always
+// call the function — it makes tests that swap `process.env.SECUTOR_HOME`
+// between contexts work without forking child processes.
 
 export function ensureRoot(): void {
-	fs.mkdirSync(ROOT_DIR, {recursive: true});
-	fs.mkdirSync(CONTEXTS_DIR, {recursive: true});
+	fs.mkdirSync(rootDir(), {recursive: true});
+	fs.mkdirSync(contextsDir(), {recursive: true});
 }
 
 export function contextDir(name: string): string {
-	return path.join(CONTEXTS_DIR, name);
+	return path.join(contextsDir(), name);
 }
 
 export function contextDbFile(name: string): string {

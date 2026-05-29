@@ -21,6 +21,8 @@ type Action =
 	| 'create-profile'
 	| 'import-cert'
 	| 'import-profile'
+	| 'import-bundle'
+	| 'hubs'
 	| 'verify'
 	| 'sni'
 	| 'audit'
@@ -54,6 +56,8 @@ export function MainMenuScreen() {
 		{label: '➕  ' + t('main.createProfile'),   value: 'create-profile' as Action},
 		{label: '⤵   ' + t('main.importCert'),     value: 'import-cert' as Action},
 		{label: '⤵   ' + t('main.importProfile'),  value: 'import-profile' as Action},
+		{label: '⤵   ' + t('main.importBundle'),   value: 'import-bundle' as Action},
+		{label: '🌐  ' + t('main.hubs'),            value: 'hubs' as Action},
 		{label: '─────────────────────────',       value: 'sep2' as any, disabled: true},
 		{label: '🔍  ' + t('main.verify'),          value: 'verify' as Action},
 		{label: '🌐  ' + t('main.sni'),             value: 'sni' as Action},
@@ -93,6 +97,8 @@ export function MainMenuScreen() {
 			case 'create-profile':return push({kind: 'create-profile'});
 			case 'import-cert':   return push({kind: 'import-cert'});
 			case 'import-profile':return push({kind: 'import-profile'});
+			case 'import-bundle': return push({kind: 'import-bundle'});
+			case 'hubs':          return push({kind: 'hubs'});
 			case 'verify':        return push({kind: 'verify'});
 			case 'sni':           return push({kind: 'sni-search'});
 			case 'audit':         return push({kind: 'audit'});

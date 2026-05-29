@@ -11,9 +11,32 @@ ACME (RFC 8555) сервер поверх CA, управляемого `secutor`
 | хотите понять, как оно устроено                | [docs/architecture.md](docs/architecture.md)                          |
 | собираетесь развернуть и пользоваться          | **[docs/usage.md](docs/usage.md)** ← основной гайд                    |
 | ставите в WireGuard / Docker / LAN-сценарий    | **[docs/vpn-setup.md](docs/vpn-setup.md)** ← VPN-сетап от и до        |
+| хотите **поднять администрирование** на хабе   | **[docs/admin-setup.md](docs/admin-setup.md)** ← пошаговый setup-гайд |
+| хотите дёргать admin API из своих скриптов     | **[docs/admin-api.md](docs/admin-api.md)** ← admin (mTLS) reference   |
+| планируете ротацию CA или массовый перевыпуск  | [docs/ca-rotation.md](docs/ca-rotation.md)                            |
+| хотите, чтобы хаб сам публиковал DNS-01 TXT    | [docs/server-managed-dns.md](docs/server-managed-dns.md)              |
 | что-то не работает                             | [docs/troubleshooting.md](docs/troubleshooting.md)                    |
 | хотите знать про секреты / mounts / тома       | [docs/deployment.md](docs/deployment.md)                              |
 | ковыряетесь в БД ACME-стейта                   | [docs/schema.md](docs/schema.md)                                      |
+
+## Что нового в 0.2 (admin/rotate/auto-DNS)
+
+Поверх обычного RFC 8555 поднимается опциональный второй слой:
+
+- **Admin API (mTLS)** на отдельном порту — `/admin/v1/*`. Инвентаризация
+  сертификатов, отзыв (operator), бан аккаунтов с каскадным revoke (owner),
+  статистика по ордерам, аудит-лог, метрики Prometheus, admin-issue
+  (выпуск в обход challenge'ей). Trust для admin-клиентов настраивается
+  отдельно от ACME-CA: список fingerprint'ов и/или независимых CA с
+  subjectMatch.
+- **CA rotation** через admin API: stage → promote (atomic in-RAM swap) →
+  rollback (в окне). Плюс background reissue job, который пересigning'ит
+  все валидные leaf'ы под новый ключ.
+- **Server-managed DNS-01** — клиент может попросить хаб самостоятельно
+  опубликовать TXT-запись через сконфигурированного провайдера
+  (rfc2136 / script / in-memory для тестов).
+- **ARI** (`GET /renewalInfo/:id`) — подсказка о renewal-окне для
+  совместимых клиентов.
 
 ## Минимальная демонстрация (полный E2E без сети)
 
