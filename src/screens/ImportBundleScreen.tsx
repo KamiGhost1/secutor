@@ -31,7 +31,7 @@ export function ImportBundleScreen() {
 	const [password, setPassword] = useState('');
 
 	useInput((_, key) => {
-		if (key.escape && (step.kind === 'pick-file' || step.kind === 'done')) pop();
+		if (key.escape && step.kind === 'done') pop();
 	});
 
 	if (step.kind === 'pick-file') {

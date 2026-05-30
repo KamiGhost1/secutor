@@ -1,6 +1,6 @@
 {
     "name": "secutor",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "description": "Interactive TUI certificate manager (CA, server, client, profiles)",
     "bin": {
         "secutor": "dist/cli.js"
@@ -13,20 +13,22 @@
     "main": "dist/cli.js",
     "type": "module",
     "keywords": [
+        "certificate-manager",
+        "certificates",
+        "ca",
+        "self-signed-certificate",
+        "mtls",
+        "acme",
+        "acme-server",
         "tui",
         "cli",
-        "terminal",
-        "interactive",
-        "certificate",
         "ssl",
         "tls",
         "pki",
         "x509",
-        "cert-manager",
         "management",
         "security",
-        "openssl",
-        "acme"
+        "openssl"    
     ],
     "scripts": {
         "build": "tsc",
