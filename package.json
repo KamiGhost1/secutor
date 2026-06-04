@@ -1,6 +1,6 @@
 {
     "name": "secutor",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "description": "Interactive TUI certificate manager (CA, server, client, profiles)",
     "bin": {
         "secutor": "dist/cli.js"
@@ -66,5 +66,5 @@
         "win32"
     ],
     "author": "kamighost",
-    "license": "BSD-3-Clause"
+    "license": "Apache-2.0"
 }

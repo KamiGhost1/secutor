@@ -17,15 +17,20 @@ export function SettingsScreen() {
 	const {locale, setLocale} = useLocale();
 	const [settings, setSettings] = useState<Settings>(() => readSettings());
 
+	const languages: Array<{loc: Locale; label: string}> = [
+		{loc: 'en', label: 'English'},
+		{loc: 'ru', label: 'Русский'},
+		{loc: 'de', label: 'Deutsch'},
+		{loc: 'es', label: 'Español'},
+		{loc: 'fr', label: 'Français'},
+		{loc: 'zh', label: '中文'},
+	];
+
 	const items: Array<{label: string; value: ItemValue; hint?: string}> = [
-		{
-			label: `${locale === 'en' ? '✔ ' : '  '}English`,
-			value: {kind: 'locale', loc: 'en'},
-		},
-		{
-			label: `${locale === 'ru' ? '✔ ' : '  '}Русский`,
-			value: {kind: 'locale', loc: 'ru'},
-		},
+		...languages.map(({loc, label}) => ({
+			label: `${locale === loc ? '✔ ' : '  '}${label}`,
+			value: {kind: 'locale', loc} as ItemValue,
+		})),
 		{
 			label: `${settings.showWebConfigs ? '✔ ' : '  '}${t('settings.showWebConfigs')}`,
 			value: {kind: 'toggle', key: 'showWebConfigs'},
@@ -68,6 +73,12 @@ export function SettingsScreen() {
 }
 
 function makeChangedToast(loc: Locale): string {
-	if (loc === 'ru') return 'Язык изменён на Русский';
-	return 'Language changed to English';
+	switch (loc) {
+		case 'ru': return 'Язык изменён на Русский';
+		case 'de': return 'Sprache auf Deutsch geändert';
+		case 'es': return 'Idioma cambiado a Español';
+		case 'fr': return 'Langue changée en Français';
+		case 'zh': return '语言已切换为中文';
+		default: return 'Language changed to English';
+	}
 }

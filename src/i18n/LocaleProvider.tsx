@@ -4,10 +4,16 @@ import path from 'path';
 import {rootDir, ensureRoot} from '../storage/paths.js';
 import {en, StringKey, Strings} from './locales/en.js';
 import {ru} from './locales/ru.js';
+import {de} from './locales/de.js';
+import {es} from './locales/es.js';
+import {fr} from './locales/fr.js';
+import {zh} from './locales/zh.js';
 
-export type Locale = 'en' | 'ru';
+export type Locale = 'en' | 'ru' | 'de' | 'es' | 'fr' | 'zh';
 
-const DICT: Record<Locale, Strings> = {en, ru};
+const DICT: Record<Locale, Strings> = {en, ru, de, es, fr, zh};
+
+const SUPPORTED_LOCALES: Locale[] = ['en', 'ru', 'de', 'es', 'fr', 'zh'];
 
 function localeFile(): string {
 	return path.join(rootDir(), 'locale.json');
@@ -16,7 +22,7 @@ function localeFile(): string {
 function readLocaleFromDisk(): Locale {
 	try {
 		const raw = JSON.parse(fs.readFileSync(localeFile(), 'utf8'));
-		if (raw?.locale === 'ru' || raw?.locale === 'en') return raw.locale;
+		if (SUPPORTED_LOCALES.includes(raw?.locale)) return raw.locale as Locale;
 	} catch {}
 	return 'en';
 }

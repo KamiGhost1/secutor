@@ -600,7 +600,7 @@ The suite covers:
 
 ## License
 
-BSD 3-Clause — see [`LICENSE`](LICENSE) for the full text.
+Apache License 2.0 — see [`LICENSE`](LICENSE) for the full text.
 
 Copyright © 2026 kamighost.
 
